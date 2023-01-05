@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::grab::ResizeState;
+use crate::controller::ResizeState;
 
 #[derive(Default)]
 pub struct SurfaceData {

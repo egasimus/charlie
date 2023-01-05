@@ -70,7 +70,7 @@ pub(crate) use smithay::{
         wayland_protocols::xdg_shell::server::{
             xdg_toplevel::{
                 self,
-                ResizeEdge
+                ResizeEdge as XdgResizeEdge
             },
         },
         wayland_server::{
