@@ -1,8 +1,6 @@
 pub const OUTPUT_NAME: &str = "winit";
 
-pub(crate) use slog::{Logger, Drain, o, warn, error, info, debug};
-
-pub(crate) use slog_scope::GlobalLoggerGuard;
+pub const BACKGROUND: &str = "data/cork.png";
 
 pub(crate) use std::{
     cell::RefCell,
@@ -11,6 +9,12 @@ pub(crate) use std::{
     time::Duration,
     error::Error,
 };
+
+pub(crate) use slog::{Logger, Drain, o, warn, error, info, debug};
+
+pub(crate) use slog_scope::GlobalLoggerGuard;
+
+pub(crate) use image::{self, ImageBuffer, Rgba};
 
 pub(crate) use smithay::{
     backend::{
@@ -40,6 +44,11 @@ pub(crate) use smithay::{
             Transform,
             buffer_dimensions,
             buffer_type,
+            gles2::{
+                Gles2Renderer,
+                Gles2Texture,
+                Gles2Error
+            }
         },
         winit::{
             self,

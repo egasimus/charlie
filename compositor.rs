@@ -153,14 +153,11 @@ impl Compositor {
         let seat = Seat::from_resource(&seat).unwrap();
         // TODO: touch resize.
         let pointer = seat.get_pointer().unwrap();
-
         // Check that this surface has a click grab.
         if !pointer.has_grab(serial) {
             return;
         }
-
         let start_data = pointer.grab_start_data().unwrap();
-
         // If the focus was for a different surface, ignore the request.
         if start_data.focus.is_none()
             || !start_data
@@ -426,16 +423,16 @@ impl Compositor {
         // First test if a specific output has been requested
         // if the requested output is not found ignore the request
         if let Some(wl_output) = wl_output {
-            return self.output_map.borrow().find_by_output(&wl_output).map(|o| o.geometry());
+            return self.output_map.borrow().find_by_output(&wl_output)
+                .map(|o| o.geometry());
         }
         // There is no output preference, try to find the output
         // where the window is currently active
-        let window_location = self.window_map.borrow()
-            .find(wl_surface)
+        let window_location = self.window_map.borrow().find(wl_surface)
             .and_then(|kind| self.window_map.borrow().location(&kind));
         if let Some(location) = window_location {
-            let window_output = self.output_map.borrow()
-                .find_by_position(location).map(|o| o.geometry());
+            let window_output = self.output_map.borrow().find_by_position(location)
+                .map(|o| o.geometry());
             if let Some(result) = window_output {
                 return Some(result);
             }

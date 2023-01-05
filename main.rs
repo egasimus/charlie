@@ -34,6 +34,7 @@ pub struct App {
     pub seat:             Seat,
     pub cursor_status:    Arc<Mutex<CursorImageStatus>>,
     pub compositor:       Rc<Compositor>,
+    pub background:       Gles2Texture,
 }
 
 impl App {
@@ -52,6 +53,11 @@ impl App {
         Self::init_data_device(&log, &display, &dnd_icon);
         let (seat, pointer, cursor_status, keyboard) = Self::init_seat(&log, &display, "seat");
         let compositor = Compositor::init(&log, display);
+        let background = Self::import_bitmap(
+            renderer.borrow_mut().renderer(),
+            &image::io::Reader::open(BACKGROUND)?.with_guessed_format().unwrap()
+                .decode().unwrap().to_rgba8()
+        )?;
         Ok(Self {
             cursor_status,
             dnd_icon,
@@ -64,7 +70,8 @@ impl App {
             seat,
             socket_name,
             suppressed_keys: Vec::new(),
-            compositor
+            compositor,
+            background
         })
     }
 
@@ -104,8 +111,8 @@ impl App {
     }
 
     fn init_loop (
-        log:        &Logger,
-        display:    &Rc<RefCell<Display>>,
+        log: &Logger,
+        display: &Rc<RefCell<Display>>,
         event_loop: LoopHandle<'static, Self>,
     ) {
         let log = log.clone();
@@ -193,8 +200,8 @@ impl App {
 
     pub fn run (
         &mut self,
-        display:        &Rc<RefCell<Display>>,
-        mut input:      WinitInputBackend,
+        display: &Rc<RefCell<Display>>,
+        mut input: WinitInputBackend,
         mut event_loop: EventLoop<'static, Self>,
     ) {
         let start_time = std::time::Instant::now();
@@ -227,6 +234,9 @@ impl App {
         // This is safe to do as with winit we are guaranteed to have exactly one output
         let result = self.renderer.borrow_mut().render(|renderer, frame| {
             frame.clear([0.8, 0.8, 0.9, 1.0])?;
+            frame.render_texture_at(
+                &self.background, (0.0, 0.0).into(), 1, 1.0, Transform::Normal, 1.0
+            );
             let windows = self.compositor.window_map.borrow();
             windows.draw_windows(&self.log, renderer, frame, output_geometry, output_scale)?;
             let (x, y) = self.pointer_location.into();
@@ -292,8 +302,9 @@ impl App {
         }
         Ok(if let CursorImageStatus::Image(ref surface) = *guard {
             *cursor_visible = false;
-            let states = with_states(surface, |states| Some(states.data_map.get::<Mutex<CursorImageAttributes>>()
-                .unwrap().lock().unwrap().hotspot));
+            let states = with_states(surface, |states|
+                Some(states.data_map.get::<Mutex<CursorImageAttributes>>()
+                    .unwrap().lock().unwrap().hotspot));
             let delta = if let Some(h) = states.unwrap_or(None) { h } else {
                 warn!(self.log, "Trying to display as a cursor a surface that does not have the CursorImage role.");
                 (0, 0).into()
@@ -329,6 +340,36 @@ impl App {
     pub fn refresh (&mut self) {
         self.compositor.window_map.borrow_mut().refresh();
         self.compositor.output_map.borrow_mut().refresh();
+    }
+
+    pub fn import_bitmap<C: std::ops::Deref<Target = [u8]>>(
+        renderer: &mut Gles2Renderer, image: &ImageBuffer<Rgba<u8>, C>,
+    ) -> Result<Gles2Texture, Gles2Error> {
+        use smithay::backend::renderer::gles2::ffi;
+        renderer.with_context(|renderer, gl| unsafe {
+            let mut tex = 0;
+            gl.GenTextures(1, &mut tex);
+            gl.BindTexture(ffi::TEXTURE_2D, tex);
+            gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_WRAP_S, ffi::CLAMP_TO_EDGE as i32);
+            gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_WRAP_T, ffi::CLAMP_TO_EDGE as i32);
+            gl.TexImage2D(
+                ffi::TEXTURE_2D,
+                0,
+                ffi::RGBA as i32,
+                image.width() as i32,
+                image.height() as i32,
+                0,
+                ffi::RGBA,
+                ffi::UNSIGNED_BYTE as u32,
+                image.as_ptr() as *const _,
+            );
+            gl.BindTexture(ffi::TEXTURE_2D, 0);
+            Gles2Texture::from_raw(
+                renderer,
+                tex,
+                (image.width() as i32, image.height() as i32).into(),
+            )
+        })
     }
 
     fn keyboard_key_to_action<B: InputBackend>(&mut self, evt: B::KeyboardKeyEvent) -> KeyAction {
