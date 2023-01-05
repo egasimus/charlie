@@ -1,6 +1,6 @@
 pub const OUTPUT_NAME: &str = "winit";
 
-pub const BACKGROUND: &str = "data/cork.png";
+pub const BACKGROUND: &str = "data/cork2.png";
 
 pub(crate) use std::{
     cell::RefCell,

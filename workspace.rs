@@ -30,31 +30,22 @@ impl Workspace {
         output_size:  Size<i32, Logical>,
         output_scale: f32
     ) -> Result<(), SwapBuffersError> {
-        let background_size: Size<i32, Buffer>  = self.background.size();
-        let background_size: Size<i32, Logical> = background_size.to_logical(1);
-        let background_tile_x = output_size.w.div_ceil(background_size.w) + 1;
-        let background_tile_y = output_size.h.div_ceil(background_size.h) + 1;
-        for x in 0..background_tile_x {
-            for y in 0..background_tile_y {
-                let offset: Point<f64, Physical> = self.offset;
-                let offset: Point<i32, Logical> = offset
-                    .to_logical(output_scale as f64)
-                    .to_i32_round();
-                let offset_x = (x * background_size.w) + offset.x;
-                let offset_y = (y * background_size.h) + offset.y;
-                let offset: Point<i32, Logical> = (offset_x, offset_y).into();
-                let mut offset: Point<f64, Physical> = offset
-                    .to_f64()
-                    .to_physical(output_scale as f64);
-                if offset.x > output_size.w as f64 {
-                    offset.x -= output_size.w as f64 + background_size.w as f64
-                }
-                if offset.y > output_size.h  as f64{
-                    offset.y -= output_size.h as f64 + background_size.h as f64
-                }
+        let size:     Size<i32, Buffer>    = self.background.size();
+        let size:     Size<i32, Logical>   = size.to_logical(1);
+        let tiles_x:  i32                  = output_size.w.div_ceil(size.w);
+        let tiles_y:  i32                  = output_size.h.div_ceil(size.h);
+        let offset:   Point<f64, Physical> = self.offset;
+        let offset:   Point<i32, Logical>  = offset.to_logical(output_scale as f64).to_i32_round();
+        let offset_x: i32                  = offset.x % size.w;
+        let offset_y: i32                  = offset.y % size.h;
+        for x in -1..tiles_x + 1 {
+            for y in -1..tiles_y + 1 {
+                let offset: Point<i32, Physical> =
+                    ((x * size.w) + offset_x, (y * size.h) + offset_y).into();
+                let offset: Point<f64, Physical> = offset.to_f64();
                 frame.render_texture_at(
                     &self.background,
-                    offset,
+                    offset.into(),
                     1,
                     output_scale.into(),
                     Transform::Normal,

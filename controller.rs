@@ -229,8 +229,8 @@ impl Controller {
         let suppressed_keys = &mut self.suppressed_keys;
         self.keyboard.input(keycode, state, serial, time, |modifiers, keysym| {
             debug!(log, "keysym";
-                "state" => format!("{:?}", state),
-                "mods" => format!("{:?}", modifiers),
+                "state"  => format!("{:?}", state),
+                "mods"   => format!("{:?}", modifiers),
                 "keysym" => ::xkbcommon::xkb::keysym_get_name(keysym)
             );
             // If the key is pressed and triggered a action
