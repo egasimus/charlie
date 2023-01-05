@@ -3,15 +3,18 @@ use crate::compositor::{Compositor, WindowMap};
 use crate::surface::{SurfaceData, SurfaceKind};
 
 pub struct Controller {
-    pub log:              Logger,
-    pub running:          Arc<AtomicBool>,
-    pub compositor:       Rc<Compositor>,
-    pub seat:             Seat,
-    pub pointer:          PointerHandle,
-    pub pointer_location: Point<f64, Logical>,
-    pub cursor_status:    Arc<Mutex<CursorImageStatus>>,
-    pub keyboard:         KeyboardHandle,
-    pub suppressed_keys:  Vec<u32>,
+    pub log:                   Logger,
+    pub running:               Arc<AtomicBool>,
+    pub compositor:            Rc<Compositor>,
+    pub seat:                  Seat,
+    pub pointer:               PointerHandle,
+    pub pointer_location:      Point<f64, Logical>,
+    pub last_pointer_location: Point<f64, Logical>,
+    pub cursor_status:         Arc<Mutex<CursorImageStatus>>,
+    pub keyboard:              KeyboardHandle,
+    pub suppressed_keys:       Vec<u32>,
+    pub background_drag:       bool,
+    pub background_offset:     Point<f64, Physical>
 }
 
 impl Controller {
@@ -28,11 +31,14 @@ impl Controller {
             running,
             compositor,
             seat,
-            pointer,
-            pointer_location: (0.0, 0.0).into(),
-            cursor_status,
             keyboard,
-            suppressed_keys: vec![]
+            suppressed_keys:   vec![],
+            pointer,
+            pointer_location:      (0.0, 0.0).into(),
+            last_pointer_location: (0.0, 0.0).into(),
+            cursor_status,
+            background_drag:   false,
+            background_offset: (0.0, 0.0).into()
         }
     }
 
@@ -56,39 +62,53 @@ impl Controller {
         (seat, pointer, cursor_status, keyboard)
     }
 
-    fn keyboard_key_to_action<B: InputBackend>(&mut self, evt: B::KeyboardKeyEvent) -> KeyAction {
-        let keycode = evt.key_code();
-        let state = evt.state();
-        debug!(self.log, "key"; "keycode" => keycode, "state" => format!("{:?}", state));
-        let serial = SCOUNTER.next_serial();
-        let log = &self.log;
-        let time = Event::time(&evt);
-        let mut action = KeyAction::None;
-        let suppressed_keys = &mut self.suppressed_keys;
-        self.keyboard.input(keycode, state, serial, time, |modifiers, keysym| {
-            debug!(log, "keysym";
-                "state" => format!("{:?}", state),
-                "mods" => format!("{:?}", modifiers),
-                "keysym" => ::xkbcommon::xkb::keysym_get_name(keysym)
-            );
-            // If the key is pressed and triggered a action
-            // we will not forward the key to the client.
-            // Additionally add the key to the suppressed keys
-            // so that we can decide on a release if the key
-            // should be forwarded to the client or not.
-            if let KeyState::Pressed = state {
-                action = process_keyboard_shortcut(*modifiers, keysym);
-                // forward to client only if action == KeyAction::Forward
-                let forward = matches!(action, KeyAction::Forward);
-                if !forward { suppressed_keys.push(keysym); }
-                forward
-            } else {
-                let suppressed = suppressed_keys.contains(&keysym);
-                if suppressed { suppressed_keys.retain(|k| *k != keysym); }
-                !suppressed
+    pub fn process_input_event<B>(&mut self, event: InputEvent<B>)
+    where
+        B: InputBackend<SpecialEvent = smithay::backend::winit::WinitEvent>,
+    {
+        use smithay::backend::winit::WinitEvent;
+        match event {
+            InputEvent::Keyboard { event, .. }
+                => self.on_keyboard::<B>(event),
+            InputEvent::PointerMotion { event, .. }
+                => self.on_pointer_move_relative::<B>(event),
+            InputEvent::PointerMotionAbsolute { event, .. }
+                => self.on_pointer_move_absolute::<B>(event),
+            InputEvent::PointerButton { event, .. }
+                => self.on_pointer_button::<B>(event),
+            InputEvent::PointerAxis { event, .. }
+                => self.on_pointer_axis::<B>(event),
+            InputEvent::Special(WinitEvent::Resized { size, .. })
+                => {
+                    self.compositor.output_map.borrow_mut().update_mode_by_name(
+                        OutputMode { size, refresh: 60_000, },
+                        OUTPUT_NAME,
+                    );
+                }
+            _ => {
+                // other events are not handled in anvil (yet)
             }
-        });
-        action
+        }
+    }
+
+    fn on_pointer_move_relative<B: InputBackend>(&mut self, evt: B::PointerMotionEvent) {
+        let delta = evt.delta();
+        panic!("{:?}", delta);
+    }
+
+    fn on_pointer_move_absolute<B: InputBackend>(&mut self, evt: B::PointerMotionAbsoluteEvent) {
+        let output_size = self.compositor.output_map.borrow().find_by_name(OUTPUT_NAME)
+            .map(|o| o.size()).unwrap();
+        let pos = evt.position_transformed(output_size);
+        self.last_pointer_location = self.pointer_location;
+        self.pointer_location = pos;
+        let serial = SCOUNTER.next_serial();
+        let under = self.compositor.window_map.borrow().get_surface_under(pos);
+        self.pointer.motion(pos, under, serial, evt.time());
+        if self.background_drag {
+            let delta = self.pointer_location - self.last_pointer_location;
+            self.background_offset += delta.to_physical(1.0);
+        }
     }
 
     fn on_pointer_button<B: InputBackend>(&mut self, evt: B::PointerButtonEvent) {
@@ -103,14 +123,23 @@ impl Controller {
             ButtonState::Pressed => {
                 // change the keyboard focus unless the pointer is grabbed
                 if !self.pointer.is_grabbed() {
-                    let under = self.compositor.window_map.borrow_mut()
-                        .get_surface_and_bring_to_top(self.pointer_location);
-                    self.keyboard
-                        .set_focus(under.as_ref().map(|&(ref s, _)| s), serial);
+                    let pos   = self.pointer_location;
+                    let under = self.compositor.window_map.borrow().get_surface_under(pos);
+                    if under.is_some () {
+                        let under = self.compositor.window_map.borrow_mut()
+                            .get_surface_and_bring_to_top(self.pointer_location);
+                        self.keyboard
+                            .set_focus(under.as_ref().map(|&(ref s, _)| s), serial);
+                    } else {
+                        self.background_drag = true;
+                    }
                 }
                 wl_pointer::ButtonState::Pressed
             }
-            ButtonState::Released => wl_pointer::ButtonState::Released,
+            ButtonState::Released => {
+                self.background_drag = false;
+                wl_pointer::ButtonState::Released
+            },
         };
         self.pointer.button(button, state, serial, evt.time());
     }
@@ -151,78 +180,82 @@ impl Controller {
         }
     }
 
-    pub fn process_input_event<B>(&mut self, event: InputEvent<B>)
-    where
-        B: InputBackend<SpecialEvent = smithay::backend::winit::WinitEvent>,
-    {
-        use smithay::backend::winit::WinitEvent;
-        match event {
-            InputEvent::Keyboard { event, .. } => match self.keyboard_key_to_action::<B>(event) {
-                KeyAction::None | KeyAction::Forward => {}
-                KeyAction::Quit => {
-                    info!(self.log, "Quitting.");
-                    self.running.store(false, Ordering::SeqCst);
-                }
-                KeyAction::Run(cmd) => {
-                    info!(self.log, "Starting program"; "cmd" => cmd.clone());
-                    if let Err(e) = std::process::Command::new(&cmd).spawn() {
-                        error!(self.log,
-                            "Failed to start program";
-                            "cmd" => cmd,
-                            "err" => format!("{:?}", e)
-                        );
-                    }
-                }
-                KeyAction::ScaleUp => {
-                    let current_scale = {
-                        self.compositor.output_map.borrow().find_by_name(OUTPUT_NAME)
-                            .map(|o| o.scale()).unwrap_or(1.0)
-                    };
-                    self.compositor.output_map.borrow_mut()
-                        .update_scale_by_name(current_scale + 0.25f32, OUTPUT_NAME);
-                }
-                KeyAction::ScaleDown => {
-                    let current_scale = {
-                        self.compositor.output_map.borrow().find_by_name(OUTPUT_NAME)
-                            .map(|o| o.scale()).unwrap_or(1.0)
-                    };
-                    self.compositor.output_map.borrow_mut().update_scale_by_name(
-                        f32::max(1.0f32, current_scale - 0.25f32),
-                        OUTPUT_NAME,
-                    );
-                }
-                action => {
-                    warn!(self.log, "Key action {:?} unsupported on winit backend.", action);
-                }
-            },
-            InputEvent::PointerMotionAbsolute { event, .. }
-                => self.on_pointer_move_absolute::<B>(event),
-            InputEvent::PointerButton { event, .. }
-                => self.on_pointer_button::<B>(event),
-            InputEvent::PointerAxis { event, .. }
-                => self.on_pointer_axis::<B>(event),
-            InputEvent::Special(WinitEvent::Resized { size, .. })
-                => {
-                    self.compositor.output_map.borrow_mut().update_mode_by_name(
-                        OutputMode { size, refresh: 60_000, },
-                        OUTPUT_NAME,
-                    );
-                }
-            _ => {
-                // other events are not handled in anvil (yet)
+    fn on_keyboard<B: InputBackend> (&mut self, event: B::KeyboardKeyEvent) {
+        match self.keyboard_key_to_action::<B>(event) {
+            KeyAction::None | KeyAction::Forward => {}
+            KeyAction::Quit => {
+                info!(self.log, "Quitting.");
+                self.running.store(false, Ordering::SeqCst);
             }
-        }
+            KeyAction::Run(cmd) => {
+                info!(self.log, "Starting program"; "cmd" => cmd.clone());
+                if let Err(e) = std::process::Command::new(&cmd).spawn() {
+                    error!(self.log,
+                        "Failed to start program";
+                        "cmd" => cmd,
+                        "err" => format!("{:?}", e)
+                    );
+                }
+            }
+            KeyAction::ScaleUp => {
+                let current_scale = {
+                    self.compositor.output_map.borrow().find_by_name(OUTPUT_NAME)
+                        .map(|o| o.scale()).unwrap_or(1.0)
+                };
+                self.compositor.output_map.borrow_mut()
+                    .update_scale_by_name(current_scale + 0.25f32, OUTPUT_NAME);
+            }
+            KeyAction::ScaleDown => {
+                let current_scale = {
+                    self.compositor.output_map.borrow().find_by_name(OUTPUT_NAME)
+                        .map(|o| o.scale()).unwrap_or(1.0)
+                };
+                self.compositor.output_map.borrow_mut().update_scale_by_name(
+                    f32::max(1.0f32, current_scale - 0.25f32),
+                    OUTPUT_NAME,
+                );
+            }
+            action => {
+                warn!(self.log, "Key action {:?} unsupported on winit backend.", action);
+            }
+        };
     }
 
-    fn on_pointer_move_absolute<B: InputBackend>(&mut self, evt: B::PointerMotionAbsoluteEvent) {
-        let output_size = self.compositor.output_map.borrow().find_by_name(OUTPUT_NAME)
-            .map(|o| o.size()).unwrap();
-        let pos = evt.position_transformed(output_size);
-        self.pointer_location = pos;
+    fn keyboard_key_to_action<B: InputBackend>(&mut self, evt: B::KeyboardKeyEvent) -> KeyAction {
+        let keycode = evt.key_code();
+        let state = evt.state();
+        debug!(self.log, "key"; "keycode" => keycode, "state" => format!("{:?}", state));
         let serial = SCOUNTER.next_serial();
-        let under = self.compositor.window_map.borrow().get_surface_under(pos);
-        self.pointer.motion(pos, under, serial, evt.time());
+        let log = &self.log;
+        let time = Event::time(&evt);
+        let mut action = KeyAction::None;
+        let suppressed_keys = &mut self.suppressed_keys;
+        self.keyboard.input(keycode, state, serial, time, |modifiers, keysym| {
+            debug!(log, "keysym";
+                "state" => format!("{:?}", state),
+                "mods" => format!("{:?}", modifiers),
+                "keysym" => ::xkbcommon::xkb::keysym_get_name(keysym)
+            );
+            // If the key is pressed and triggered a action
+            // we will not forward the key to the client.
+            // Additionally add the key to the suppressed keys
+            // so that we can decide on a release if the key
+            // should be forwarded to the client or not.
+            if let KeyState::Pressed = state {
+                action = process_keyboard_shortcut(*modifiers, keysym);
+                // forward to client only if action == KeyAction::Forward
+                let forward = matches!(action, KeyAction::Forward);
+                if !forward { suppressed_keys.push(keysym); }
+                forward
+            } else {
+                let suppressed = suppressed_keys.contains(&keysym);
+                if suppressed { suppressed_keys.retain(|k| *k != keysym); }
+                !suppressed
+            }
+        });
+        action
     }
+
 }
 
 /// Possible results of a keyboard action

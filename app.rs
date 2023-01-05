@@ -189,7 +189,12 @@ impl App {
         let result = self.renderer.borrow_mut().render(|renderer, frame| {
             frame.clear([0.8, 0.8, 0.9, 1.0])?;
             frame.render_texture_at(
-                &self.background, (0.0, 0.0).into(), 1, 1.0, Transform::Normal, 1.0
+                &self.background,
+                self.controller.background_offset,
+                1,
+                1.0,
+                Transform::Normal,
+                1.0
             )?;
             let windows = self.compositor.window_map.borrow();
             windows.draw_windows(&self.log, renderer, frame, output_geometry, output_scale)?;

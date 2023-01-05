@@ -115,10 +115,8 @@ impl Compositor {
                     state.states.unset(xdg_toplevel::State::Maximized);
                     state.size = None;
                 });
-
                 if fs_changed.is_ok() {
                     surface.send_configure();
-
                     // NOTE: In real compositor mouse location should be mapped to a new window size
                     // For example, you could:
                     // 1) transform mouse pointer position from compositor space to window space (location relative)
@@ -135,15 +133,12 @@ impl Compositor {
                 }
             }
         }
-
-        let grab = MoveSurfaceGrab {
+        pointer.set_grab(MoveSurfaceGrab {
             start_data,
             window_map: self.window_map.clone(),
             toplevel,
             initial_window_location,
-        };
-
-        pointer.set_grab(grab, serial);
+        }, serial);
     }
 
     pub fn xdg_resize (

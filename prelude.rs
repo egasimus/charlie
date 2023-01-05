@@ -31,6 +31,7 @@ pub(crate) use smithay::{
             MouseButton,
             PointerAxisEvent,
             PointerButtonEvent,
+            PointerMotionEvent,
             PointerMotionAbsoluteEvent,
         },
         renderer::{
