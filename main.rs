@@ -1,3 +1,5 @@
+#![feature(int_roundings)]
+
 mod prelude;
 mod app;
 mod surface;
@@ -15,5 +17,7 @@ fn main () -> Result<(), Box<dyn Error>> {
     let mut charlie = App::init(log, &display, &renderer, &event_loop)?;
     charlie.add_output(OUTPUT_NAME);
     std::process::Command::new("kitty").spawn()?;
+    std::process::Command::new("chromium").arg("--ozone-platform=wayland").spawn()?;
+    //std::process::Command::new("glxgears").spawn()?;
     Ok(charlie.run(&display, input, event_loop))
 }

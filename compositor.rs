@@ -1199,6 +1199,7 @@ impl WindowMap {
                 return;
             }
             initial_place.x -= output_rect.loc.x;
+            initial_place.y -= output_rect.loc.y;
             if let Some(wl_surface) = toplevel_surface.get_surface() {
                 // this surface is a root of a subsurface tree that needs to be drawn
                 if let Err(err) =

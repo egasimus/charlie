@@ -158,26 +158,24 @@ impl Controller {
             .unwrap_or_else(|| evt.amount_discrete(Axis::Vertical).unwrap() * 3.0);
         let horizontal_amount_discrete = evt.amount_discrete(Axis::Horizontal);
         let vertical_amount_discrete = evt.amount_discrete(Axis::Vertical);
-        {
-            let mut frame = AxisFrame::new(evt.time()).source(source);
-            if horizontal_amount != 0.0 {
-                frame = frame.value(wl_pointer::Axis::HorizontalScroll, horizontal_amount);
-                if let Some(discrete) = horizontal_amount_discrete {
-                    frame = frame.discrete(wl_pointer::Axis::HorizontalScroll, discrete as i32);
-                }
-            } else if source == wl_pointer::AxisSource::Finger {
-                frame = frame.stop(wl_pointer::Axis::HorizontalScroll);
+        let mut frame = AxisFrame::new(evt.time()).source(source);
+        if horizontal_amount != 0.0 {
+            frame = frame.value(wl_pointer::Axis::HorizontalScroll, horizontal_amount);
+            if let Some(discrete) = horizontal_amount_discrete {
+                frame = frame.discrete(wl_pointer::Axis::HorizontalScroll, discrete as i32);
             }
-            if vertical_amount != 0.0 {
-                frame = frame.value(wl_pointer::Axis::VerticalScroll, vertical_amount);
-                if let Some(discrete) = vertical_amount_discrete {
-                    frame = frame.discrete(wl_pointer::Axis::VerticalScroll, discrete as i32);
-                }
-            } else if source == wl_pointer::AxisSource::Finger {
-                frame = frame.stop(wl_pointer::Axis::VerticalScroll);
-            }
-            self.pointer.axis(frame);
+        } else if source == wl_pointer::AxisSource::Finger {
+            frame = frame.stop(wl_pointer::Axis::HorizontalScroll);
         }
+        if vertical_amount != 0.0 {
+            frame = frame.value(wl_pointer::Axis::VerticalScroll, vertical_amount);
+            if let Some(discrete) = vertical_amount_discrete {
+                frame = frame.discrete(wl_pointer::Axis::VerticalScroll, discrete as i32);
+            }
+        } else if source == wl_pointer::AxisSource::Finger {
+            frame = frame.stop(wl_pointer::Axis::VerticalScroll);
+        }
+        self.pointer.axis(frame);
     }
 
     fn on_keyboard<B: InputBackend> (&mut self, event: B::KeyboardKeyEvent) {
