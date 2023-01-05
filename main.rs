@@ -2,9 +2,9 @@
 
 mod prelude;
 mod app;
-mod surface;
 mod compositor;
 mod controller;
+mod workspace;
 
 use crate::prelude::*;
 use crate::app::App;

@@ -1,11 +1,12 @@
 use crate::prelude::*;
-use crate::compositor::{Compositor, WindowMap};
-use crate::surface::{SurfaceData, SurfaceKind};
+use crate::compositor::{Compositor, WindowMap, SurfaceData, SurfaceKind};
+use crate::workspace::Workspace;
 
 pub struct Controller {
     pub log:                   Logger,
     pub running:               Arc<AtomicBool>,
     pub compositor:            Rc<Compositor>,
+    pub workspace:             Rc<RefCell<Workspace>>,
     pub seat:                  Seat,
     pub pointer:               PointerHandle,
     pub pointer_location:      Point<f64, Logical>,
@@ -13,8 +14,6 @@ pub struct Controller {
     pub cursor_status:         Arc<Mutex<CursorImageStatus>>,
     pub keyboard:              KeyboardHandle,
     pub suppressed_keys:       Vec<u32>,
-    pub background_drag:       bool,
-    pub background_offset:     Point<f64, Physical>
 }
 
 impl Controller {
@@ -23,13 +22,15 @@ impl Controller {
         log:        &Logger,
         display:    &Rc<RefCell<Display>>,
         running:    Arc<AtomicBool>,
-        compositor: Rc<Compositor>
+        compositor: Rc<Compositor>,
+        workspace:  Rc<RefCell<Workspace>>
     ) -> Self {
         let (seat, pointer, cursor_status, keyboard) = Self::init_seat(&log, &display, "seat");
         Self {
             log: log.clone(),
             running,
             compositor,
+            workspace,
             seat,
             keyboard,
             suppressed_keys:   vec![],
@@ -37,8 +38,6 @@ impl Controller {
             pointer_location:      (0.0, 0.0).into(),
             last_pointer_location: (0.0, 0.0).into(),
             cursor_status,
-            background_drag:   false,
-            background_offset: (0.0, 0.0).into()
         }
     }
 
@@ -99,16 +98,14 @@ impl Controller {
     fn on_pointer_move_absolute<B: InputBackend>(&mut self, evt: B::PointerMotionAbsoluteEvent) {
         let output_size = self.compositor.output_map.borrow().find_by_name(OUTPUT_NAME)
             .map(|o| o.size()).unwrap();
-        let pos = evt.position_transformed(output_size);
         self.last_pointer_location = self.pointer_location;
-        self.pointer_location = pos;
+        self.pointer_location = evt.position_transformed(output_size);
+        self.workspace.borrow_mut()
+            .on_pointer_move_absolute(self.pointer_location, self.last_pointer_location);
+        let pos    = self.pointer_location - self.workspace.borrow().offset.to_logical(1.0);
         let serial = SCOUNTER.next_serial();
-        let under = self.compositor.window_map.borrow().get_surface_under(pos);
+        let under  = self.compositor.window_map.borrow().get_surface_under(pos);
         self.pointer.motion(pos, under, serial, evt.time());
-        if self.background_drag {
-            let delta = self.pointer_location - self.last_pointer_location;
-            self.background_offset += delta.to_physical(1.0);
-        }
     }
 
     fn on_pointer_button<B: InputBackend>(&mut self, evt: B::PointerButtonEvent) {
@@ -123,21 +120,21 @@ impl Controller {
             ButtonState::Pressed => {
                 // change the keyboard focus unless the pointer is grabbed
                 if !self.pointer.is_grabbed() {
-                    let pos   = self.pointer_location;
+                    let pos   = self.pointer_location - self.workspace.borrow().offset.to_logical(1.0);
                     let under = self.compositor.window_map.borrow().get_surface_under(pos);
                     if under.is_some () {
                         let under = self.compositor.window_map.borrow_mut()
-                            .get_surface_and_bring_to_top(self.pointer_location);
+                            .get_surface_and_bring_to_top(pos);
                         self.keyboard
                             .set_focus(under.as_ref().map(|&(ref s, _)| s), serial);
                     } else {
-                        self.background_drag = true;
+                        self.workspace.borrow_mut().dragging = true;
                     }
                 }
                 wl_pointer::ButtonState::Pressed
             }
             ButtonState::Released => {
-                self.background_drag = false;
+                self.workspace.borrow_mut().dragging = false;
                 wl_pointer::ButtonState::Released
             },
         };
@@ -150,15 +147,12 @@ impl Controller {
             AxisSource::Finger => wl_pointer::AxisSource::Finger,
             AxisSource::Wheel | AxisSource::WheelTilt => wl_pointer::AxisSource::Wheel,
         };
-        let horizontal_amount = evt
-            .amount(Axis::Horizontal)
-            .unwrap_or_else(|| evt.amount_discrete(Axis::Horizontal).unwrap() * 3.0);
-        let vertical_amount = evt
-            .amount(Axis::Vertical)
-            .unwrap_or_else(|| evt.amount_discrete(Axis::Vertical).unwrap() * 3.0);
-        let horizontal_amount_discrete = evt.amount_discrete(Axis::Horizontal);
-        let vertical_amount_discrete = evt.amount_discrete(Axis::Vertical);
+
         let mut frame = AxisFrame::new(evt.time()).source(source);
+
+        let horizontal_amount = evt.amount(Axis::Horizontal)
+            .unwrap_or_else(|| evt.amount_discrete(Axis::Horizontal).unwrap() * 3.0);
+        let horizontal_amount_discrete = evt.amount_discrete(Axis::Horizontal);
         if horizontal_amount != 0.0 {
             frame = frame.value(wl_pointer::Axis::HorizontalScroll, horizontal_amount);
             if let Some(discrete) = horizontal_amount_discrete {
@@ -167,6 +161,10 @@ impl Controller {
         } else if source == wl_pointer::AxisSource::Finger {
             frame = frame.stop(wl_pointer::Axis::HorizontalScroll);
         }
+
+        let vertical_amount = evt.amount(Axis::Vertical)
+            .unwrap_or_else(|| evt.amount_discrete(Axis::Vertical).unwrap() * 3.0);
+        let vertical_amount_discrete = evt.amount_discrete(Axis::Vertical);
         if vertical_amount != 0.0 {
             frame = frame.value(wl_pointer::Axis::VerticalScroll, vertical_amount);
             if let Some(discrete) = vertical_amount_discrete {
@@ -175,6 +173,7 @@ impl Controller {
         } else if source == wl_pointer::AxisSource::Finger {
             frame = frame.stop(wl_pointer::Axis::VerticalScroll);
         }
+
         self.pointer.axis(frame);
     }
 
@@ -240,7 +239,27 @@ impl Controller {
             // so that we can decide on a release if the key
             // should be forwarded to the client or not.
             if let KeyState::Pressed = state {
-                action = process_keyboard_shortcut(*modifiers, keysym);
+                action = if modifiers.ctrl && modifiers.alt && keysym == xkb::KEY_BackSpace
+                    || modifiers.logo && keysym == xkb::KEY_q
+                {
+                    // ctrl+alt+backspace = quit
+                    // logo + q = quit
+                    KeyAction::Quit
+                } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12).contains(&keysym) {
+                    // VTSwicth
+                    KeyAction::VtSwitch((keysym - xkb::KEY_XF86Switch_VT_1 + 1) as i32)
+                } else if modifiers.logo && keysym == xkb::KEY_Return {
+                    // run terminal
+                    KeyAction::Run("weston-terminal".into())
+                } else if modifiers.logo && keysym >= xkb::KEY_1 && keysym <= xkb::KEY_9 {
+                    KeyAction::Screen((keysym - xkb::KEY_1) as usize)
+                } else if modifiers.logo && modifiers.shift && keysym == xkb::KEY_M {
+                    KeyAction::ScaleDown
+                } else if modifiers.logo && modifiers.shift && keysym == xkb::KEY_P {
+                    KeyAction::ScaleUp
+                } else {
+                    KeyAction::Forward
+                };
                 // forward to client only if action == KeyAction::Forward
                 let forward = matches!(action, KeyAction::Forward);
                 if !forward { suppressed_keys.push(keysym); }
@@ -273,30 +292,6 @@ enum KeyAction {
     Forward,
     /// Do nothing more
     None,
-}
-
-fn process_keyboard_shortcut(modifiers: ModifiersState, keysym: Keysym) -> KeyAction {
-    if modifiers.ctrl && modifiers.alt && keysym == xkb::KEY_BackSpace
-        || modifiers.logo && keysym == xkb::KEY_q
-    {
-        // ctrl+alt+backspace = quit
-        // logo + q = quit
-        KeyAction::Quit
-    } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12).contains(&keysym) {
-        // VTSwicth
-        KeyAction::VtSwitch((keysym - xkb::KEY_XF86Switch_VT_1 + 1) as i32)
-    } else if modifiers.logo && keysym == xkb::KEY_Return {
-        // run terminal
-        KeyAction::Run("weston-terminal".into())
-    } else if modifiers.logo && keysym >= xkb::KEY_1 && keysym <= xkb::KEY_9 {
-        KeyAction::Screen((keysym - xkb::KEY_1) as usize)
-    } else if modifiers.logo && modifiers.shift && keysym == xkb::KEY_M {
-        KeyAction::ScaleDown
-    } else if modifiers.logo && modifiers.shift && keysym == xkb::KEY_P {
-        KeyAction::ScaleUp
-    } else {
-        KeyAction::Forward
-    }
 }
 
 bitflags::bitflags! {

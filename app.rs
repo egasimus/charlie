@@ -1,17 +1,17 @@
 use crate::prelude::*;
-use crate::surface::draw_surface_tree;
-use crate::compositor::Compositor;
+use crate::compositor::{Compositor, draw_surface_tree};
 use crate::controller::Controller;
+use crate::workspace::Workspace;
 
 pub struct App {
-    pub log:              Logger,
-    pub socket_name:      Option<String>,
-    pub running:          Arc<AtomicBool>,
-    pub renderer:         Rc<RefCell<WinitGraphicsBackend>>,
-    pub dnd_icon:         Arc<Mutex<Option<WlSurface>>>,
-    pub compositor:       Rc<Compositor>,
-    pub controller:       Controller,
-    pub background:       Gles2Texture,
+    pub log:         Logger,
+    pub socket_name: Option<String>,
+    pub running:     Arc<AtomicBool>,
+    pub renderer:    Rc<RefCell<WinitGraphicsBackend>>,
+    pub dnd_icon:    Arc<Mutex<Option<WlSurface>>>,
+    pub compositor:  Rc<Compositor>,
+    pub controller:  Controller,
+    pub workspace:   Rc<RefCell<Workspace>>,
 }
 
 impl App {
@@ -30,12 +30,9 @@ impl App {
         Self::init_data_device(&log, &display, &dnd_icon);
         let running    = Arc::new(AtomicBool::new(true));
         let compositor = Compositor::init(&log, display);
-        let controller = Controller::init(&log, display, running.clone(), compositor.clone());
-        let background = Self::import_bitmap(
-            renderer.borrow_mut().renderer(),
-            &image::io::Reader::open(BACKGROUND)?.with_guessed_format().unwrap()
-                .decode().unwrap().to_rgba8()
-        )?;
+        let workspace  = Rc::new(RefCell::new(Workspace::init(&log, &renderer)?));
+        let controller = Controller::init(&log, display,
+            running.clone(), compositor.clone(), workspace.clone());
         Ok(Self {
             log,
             dnd_icon,
@@ -44,7 +41,7 @@ impl App {
             socket_name,
             compositor,
             controller,
-            background
+            workspace,
         })
     }
 
@@ -181,57 +178,23 @@ impl App {
     }
 
     pub fn draw (&self, cursor_visible: &mut bool) {
-        use smithay::utils::{Buffer, Logical, Physical};
         let (mut output_geometry, output_scale) = self.compositor.output_map.borrow()
             .find_by_name(OUTPUT_NAME)
             .map(|output| (output.geometry(), output.scale()))
             .unwrap();
-        let output_size:     Size<i32, Logical> = output_geometry.size;
-        let background_size: Size<i32, Buffer>  = self.background.size();
-        let background_size: Size<i32, Logical> = background_size.to_logical(1);
-        let background_tile_x = output_size.w.div_ceil(background_size.w) + 1;
-        let background_tile_y = output_size.h.div_ceil(background_size.h) + 1;
+        let workspace = self.workspace.borrow();
         // This is safe to do as with winit we are guaranteed to have exactly one output
         let result = self.renderer.borrow_mut().render(|renderer, frame| {
             frame.clear([0.8, 0.8, 0.9, 1.0])?;
+            workspace.draw(frame, output_geometry.size, output_scale)?;
             // Render an infinitely tiling background
-            for x in 0..background_tile_x {
-                for y in 0..background_tile_y {
-                    let offset: Point<f64, Physical> = self.controller.background_offset;
-                    let offset: Point<i32, Logical> = offset
-                        .to_logical(output_scale as f64)
-                        .to_i32_round();
-                    let offset_x = (x * background_size.w) + offset.x;
-                    let offset_y = (y * background_size.h) + offset.y;
-                    let offset: Point<i32, Logical> = (offset_x, offset_y).into();
-                    let mut offset: Point<f64, Physical> = offset
-                        .to_f64()
-                        .to_physical(output_scale as f64);
-                    if offset.x > output_size.w as f64 {
-                        offset.x -= output_size.w as f64 + background_size.w as f64
-                    }
-                    if offset.y > output_size.h  as f64{
-                        offset.y -= output_size.h as f64 + background_size.h as f64
-                    }
-                    frame.render_texture_at(
-                        &self.background,
-                        offset,
-                        1,
-                        output_scale.into(),
-                        Transform::Normal,
-                        1.0
-                    )?;
-                }
-            }
             // Render the windows
             let windows = self.compositor.window_map.borrow();
-            let offset: Point<i32, Logical> = self.controller.background_offset
+            let offset: Point<i32, Logical> = workspace.offset
                 .to_logical(output_scale as f64)
                 .to_i32_round();
-            println!("{:?} {:?}", output_geometry, offset);
             output_geometry.loc.x -= offset.x;
             output_geometry.loc.y -= offset.y;
-            println!("{:?}", output_geometry);
             windows.draw_windows(&self.log, renderer, frame, output_geometry, output_scale)?;
             let (x, y) = self.controller.pointer_location.into();
             let location: Point<i32, Logical> = (x as i32, y as i32).into();
@@ -334,36 +297,6 @@ impl App {
     pub fn refresh (&mut self) {
         self.compositor.window_map.borrow_mut().refresh();
         self.compositor.output_map.borrow_mut().refresh();
-    }
-
-    pub fn import_bitmap<C: std::ops::Deref<Target = [u8]>>(
-        renderer: &mut Gles2Renderer, image: &ImageBuffer<Rgba<u8>, C>,
-    ) -> Result<Gles2Texture, Gles2Error> {
-        use smithay::backend::renderer::gles2::ffi;
-        renderer.with_context(|renderer, gl| unsafe {
-            let mut tex = 0;
-            gl.GenTextures(1, &mut tex);
-            gl.BindTexture(ffi::TEXTURE_2D, tex);
-            gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_WRAP_S, ffi::CLAMP_TO_EDGE as i32);
-            gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_WRAP_T, ffi::CLAMP_TO_EDGE as i32);
-            gl.TexImage2D(
-                ffi::TEXTURE_2D,
-                0,
-                ffi::RGBA as i32,
-                image.width() as i32,
-                image.height() as i32,
-                0,
-                ffi::RGBA,
-                ffi::UNSIGNED_BYTE as u32,
-                image.as_ptr() as *const _,
-            );
-            gl.BindTexture(ffi::TEXTURE_2D, 0);
-            Gles2Texture::from_raw(
-                renderer,
-                tex,
-                (image.width() as i32, image.height() as i32).into(),
-            )
-        })
     }
 
 }
