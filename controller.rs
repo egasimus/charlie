@@ -1,6 +1,7 @@
 use crate::prelude::*;
-use crate::compositor::{Compositor, WindowMap, SurfaceData, SurfaceKind};
+use crate::compositor::{Compositor, WindowMap, SurfaceData, SurfaceKind, draw_surface_tree};
 use crate::workspace::Workspace;
+use std::cell::Cell;
 
 pub struct Controller {
     pub log:                   Logger,
@@ -12,6 +13,8 @@ pub struct Controller {
     pub pointer_location:      Point<f64, Logical>,
     pub last_pointer_location: Point<f64, Logical>,
     pub cursor_status:         Arc<Mutex<CursorImageStatus>>,
+    pub cursor_visible:        Cell<bool>,
+    pub dnd_icon:              Arc<Mutex<Option<WlSurface>>>,
     pub keyboard:              KeyboardHandle,
     pub suppressed_keys:       Vec<u32>,
 }
@@ -25,25 +28,7 @@ impl Controller {
         compositor: Rc<Compositor>,
         workspace:  Rc<RefCell<Workspace>>
     ) -> Self {
-        let (seat, pointer, cursor_status, keyboard) = Self::init_seat(&log, &display, "seat");
-        Self {
-            log: log.clone(),
-            running,
-            compositor,
-            workspace,
-            seat,
-            keyboard,
-            suppressed_keys:   vec![],
-            pointer,
-            pointer_location:      (0.0, 0.0).into(),
-            last_pointer_location: (0.0, 0.0).into(),
-            cursor_status,
-        }
-    }
-
-    pub fn init_seat (
-        log: &Logger, display: &Rc<RefCell<Display>>, seat_name: &str
-    ) -> (Seat, PointerHandle, Arc<Mutex<CursorImageStatus>>, KeyboardHandle) {
+        let seat_name = "seat";
         let (mut seat, _) = Seat::new(&mut display.borrow_mut(), seat_name.to_string(), log.clone());
         let cursor_status = Arc::new(Mutex::new(CursorImageStatus::Default));
         let cursor_status2 = cursor_status.clone();
@@ -58,7 +43,115 @@ impl Controller {
         let keyboard = seat.add_keyboard(XkbConfig::default(), 200, 25, |seat, focus| {
             set_data_device_focus(seat, focus.and_then(|s| s.as_ref().client()))
         }).expect("Failed to initialize the keyboard");
-        (seat, pointer, cursor_status, keyboard)
+        let dnd_icon = Arc::new(Mutex::new(None));
+        Self::init_data_device(&log, &display, &dnd_icon);
+        Self {
+            log:                   log.clone(),
+            running,
+            compositor,
+            workspace,
+            seat,
+            keyboard,
+            suppressed_keys:       vec![],
+            pointer,
+            pointer_location:      (0.0, 0.0).into(),
+            last_pointer_location: (0.0, 0.0).into(),
+            cursor_status,
+            cursor_visible:        Cell::new(true),
+            dnd_icon
+        }
+    }
+
+    pub fn init_data_device (
+        log: &Logger, display: &Rc<RefCell<Display>>, dnd_icon: &Arc<Mutex<Option<WlSurface>>>
+    ) {
+        let dnd_icon = dnd_icon.clone();
+        init_data_device(
+            &mut display.borrow_mut(),
+            move |event| match event {
+                DataDeviceEvent::DnDStarted { icon, .. } => {*dnd_icon.lock().unwrap() = icon;}
+                DataDeviceEvent::DnDDropped => {*dnd_icon.lock().unwrap() = None;}
+                _ => {}
+            },
+            default_action_chooser,
+            log.clone(),
+        );
+    }
+
+    pub fn draw (
+        &self,
+        renderer:     &mut Gles2Renderer,
+        frame:        &mut Gles2Frame,
+        output_scale: f32
+    ) -> Result<(), SwapBuffersError> {
+        let (x, y) = self.pointer_location.into();
+        let location: Point<i32, Logical> = (x as i32, y as i32).into();
+        self.draw_dnd_icon(renderer, frame, output_scale, location)?;
+        self.draw_cursor(renderer, frame, output_scale, location)?;
+        Ok(())
+    }
+
+    pub fn draw_dnd_icon<R, F, E, T>(
+        &self,
+        renderer:     &mut R,
+        frame:        &mut F,
+        output_scale: f32,
+        location:     Point<i32, Logical>,
+    )
+        -> Result<(), SwapBuffersError>
+    where
+        T: Texture + 'static,
+        R: Renderer<Error = E, TextureId = T, Frame = F> + ImportAll,
+        F: Frame<Error = E, TextureId = T>,
+        E: Error + Into<SwapBuffersError>
+    {
+        let guard = self.dnd_icon.lock().unwrap();
+        Ok(if let Some(ref surface) = *guard && surface.as_ref().is_alive() {
+            if get_role(surface) != Some("dnd_icon") {
+                warn!(self.log, "Trying to display as a dnd icon a surface that does not have the DndIcon role.");
+            }
+            draw_surface_tree(&self.log, renderer, frame, surface, location, output_scale)?
+        } else {
+            ()
+        })
+    }
+
+    pub fn draw_cursor<R, F, E, T>(
+        &self,
+        renderer:       &mut R,
+        frame:          &mut F,
+        output_scale:   f32,
+        location:       Point<i32, Logical>,
+    )
+        -> Result<(), SwapBuffersError>
+    where
+        T: Texture + 'static,
+        R: Renderer<Error = E, TextureId = T, Frame = F> + ImportAll,
+        F: Frame<Error = E, TextureId = T>,
+        E: Error + Into<SwapBuffersError>,
+    {
+        let mut guard = self.cursor_status.lock().unwrap();
+        let mut reset = false; // reset the cursor if the surface is no longer alive
+        if let CursorImageStatus::Image(ref surface) = *guard {
+            reset = !surface.as_ref().is_alive();
+        }
+        if reset {
+            *guard = CursorImageStatus::Default;
+        }
+        Ok(if let CursorImageStatus::Image(ref surface) = *guard {
+            self.cursor_visible.set(false);
+            let states = with_states(surface, |states|
+                Some(states.data_map.get::<Mutex<CursorImageAttributes>>()
+                    .unwrap().lock().unwrap().hotspot));
+            let delta = if let Some(h) = states.unwrap_or(None) { h } else {
+                warn!(self.log, "Trying to display as a cursor a surface that does not have the CursorImage role.");
+                (0, 0).into()
+            };
+            draw_surface_tree(&self.log, renderer, frame, surface, location - delta, output_scale)?
+        } else {
+            self.cursor_visible.set(true);
+            ()
+        })
     }
 
     pub fn process_input_event<B>(&mut self, event: InputEvent<B>)
@@ -178,53 +271,12 @@ impl Controller {
     }
 
     fn on_keyboard<B: InputBackend> (&mut self, event: B::KeyboardKeyEvent) {
-        match self.keyboard_key_to_action::<B>(event) {
-            KeyAction::None | KeyAction::Forward => {}
-            KeyAction::Quit => {
-                info!(self.log, "Quitting.");
-                self.running.store(false, Ordering::SeqCst);
-            }
-            KeyAction::Run(cmd) => {
-                info!(self.log, "Starting program"; "cmd" => cmd.clone());
-                if let Err(e) = std::process::Command::new(&cmd).spawn() {
-                    error!(self.log,
-                        "Failed to start program";
-                        "cmd" => cmd,
-                        "err" => format!("{:?}", e)
-                    );
-                }
-            }
-            KeyAction::ScaleUp => {
-                let current_scale = {
-                    self.compositor.output_map.borrow().find_by_name(OUTPUT_NAME)
-                        .map(|o| o.scale()).unwrap_or(1.0)
-                };
-                self.compositor.output_map.borrow_mut()
-                    .update_scale_by_name(current_scale + 0.25f32, OUTPUT_NAME);
-            }
-            KeyAction::ScaleDown => {
-                let current_scale = {
-                    self.compositor.output_map.borrow().find_by_name(OUTPUT_NAME)
-                        .map(|o| o.scale()).unwrap_or(1.0)
-                };
-                self.compositor.output_map.borrow_mut().update_scale_by_name(
-                    f32::max(1.0f32, current_scale - 0.25f32),
-                    OUTPUT_NAME,
-                );
-            }
-            action => {
-                warn!(self.log, "Key action {:?} unsupported on winit backend.", action);
-            }
-        };
-    }
-
-    fn keyboard_key_to_action<B: InputBackend>(&mut self, evt: B::KeyboardKeyEvent) -> KeyAction {
-        let keycode = evt.key_code();
-        let state = evt.state();
+        let keycode = event.key_code();
+        let state = event.state();
         debug!(self.log, "key"; "keycode" => keycode, "state" => format!("{:?}", state));
         let serial = SCOUNTER.next_serial();
         let log = &self.log;
-        let time = Event::time(&evt);
+        let time = Event::time(&event);
         let mut action = KeyAction::None;
         let suppressed_keys = &mut self.suppressed_keys;
         self.keyboard.input(keycode, state, serial, time, |modifiers, keysym| {
@@ -270,7 +322,44 @@ impl Controller {
                 !suppressed
             }
         });
-        action
+        match action {
+            KeyAction::None | KeyAction::Forward => {}
+            KeyAction::Quit => {
+                info!(self.log, "Quitting.");
+                self.running.store(false, Ordering::SeqCst);
+            }
+            KeyAction::Run(cmd) => {
+                info!(self.log, "Starting program"; "cmd" => cmd.clone());
+                if let Err(e) = std::process::Command::new(&cmd).spawn() {
+                    error!(self.log,
+                        "Failed to start program";
+                        "cmd" => cmd,
+                        "err" => format!("{:?}", e)
+                    );
+                }
+            }
+            KeyAction::ScaleUp => {
+                let current_scale = {
+                    self.compositor.output_map.borrow().find_by_name(OUTPUT_NAME)
+                        .map(|o| o.scale()).unwrap_or(1.0)
+                };
+                self.compositor.output_map.borrow_mut()
+                    .update_scale_by_name(current_scale + 0.05f32, OUTPUT_NAME);
+            }
+            KeyAction::ScaleDown => {
+                let current_scale = {
+                    self.compositor.output_map.borrow().find_by_name(OUTPUT_NAME)
+                        .map(|o| o.scale()).unwrap_or(1.0)
+                };
+                self.compositor.output_map.borrow_mut().update_scale_by_name(
+                    f32::max(0.05f32, current_scale - 0.05f32),
+                    OUTPUT_NAME,
+                );
+            }
+            action => {
+                warn!(self.log, "Key action {:?} unsupported on winit backend.", action);
+            }
+        };
     }
 
 }
