@@ -6,6 +6,7 @@ use crate::workspace::Workspace;
 pub struct App {
     pub log:         Logger,
     pub running:     Arc<AtomicBool>,
+    pub startup:     Vec<Command>,
     pub start_time:  Instant,
     pub event_loop:  Rc<RefCell<EventLoop<'static, Self>>>,
     pub socket_name: Option<String>,
@@ -34,8 +35,9 @@ impl App {
         let app = Self {
             log,
             running,
-            start_time: Instant::now(),
-            event_loop: Rc::new(RefCell::new(event_loop)),
+            startup:     vec![],
+            start_time:  Instant::now(),
+            event_loop:  Rc::new(RefCell::new(event_loop)),
             socket_name: None,
             display,
             renderer,
@@ -79,23 +81,27 @@ impl App {
         );
     }
     fn init_loop (&self, handle: LoopHandle<'static, Self>) {
-        let log          = self.log.clone();
-        let display      = self.display.clone();
-        let same_display = self.display.clone();
-        handle.insert_source( // init the wayland connection
-            Generic::from_fd(display.borrow().get_poll_fd(), Interest::READ, CalloopMode::Level),
-            move |_, _, state: &mut App| {
-                let mut display = same_display.borrow_mut();
-                match display.dispatch(std::time::Duration::from_millis(0), state) {
-                    Ok(_) => Ok(PostAction::Continue),
-                    Err(e) => {
-                        error!(log, "I/O error on the Wayland display: {}", e);
-                        state.running.store(false, Ordering::SeqCst);
-                        Err(e)
-                    }
+        let log     = self.log.clone();
+        let display = self.display.clone();
+        let source  = Generic::from_fd(
+            self.display.borrow().get_poll_fd(),
+            Interest::READ,
+            CalloopMode::Level
+        );
+        // init the wayland connection
+        handle.insert_source(source, move |_, _, state: &mut App| {
+            let mut display = display.borrow_mut();
+            match display.dispatch(std::time::Duration::from_millis(0), state) {
+                Ok(_) => {
+                    Ok(PostAction::Continue)
+                },
+                Err(e) => {
+                    error!(log, "I/O error on the Wayland display: {}", e);
+                    state.running.store(false, Ordering::SeqCst);
+                    Err(e)
                 }
-            },
-        ).expect("Failed to init the wayland event source.");
+            }
+        }).expect("Failed to init the wayland event source.");
     }
     pub fn socket (&mut self, enable: bool) -> &mut Self {
         self.socket_name = if enable {
@@ -125,33 +131,32 @@ impl App {
         );
         self
     }
-    pub fn run (&mut self, command: &mut Command) -> &mut Self {
-        command.spawn().unwrap();
+    pub fn run (&mut self, command: Command) -> &mut Self {
+        self.startup.push(command);
         self
     }
-    pub fn start (&mut self) {
-        //self.compositor.x11_start();
+    pub fn start (&mut self) -> Result<(), Box<dyn Error>> {
+        self.compositor.x11_start();
         self.start_time = Instant::now();
         info!(self.log, "Initialization completed, starting the main loop.");
         while self.running() {
-            if !self.dispatch_input() { self.stop(); break; }
+            self.dispatch_input()?;
             self.draw();
             self.flush();
-            if !self.dispatch_event_loop() { self.stop(); break; }
+            self.dispatch_event_loop()?;
             self.flush();
             self.refresh();
         }
         self.clear();
+        Ok(())
     }
-    pub fn dispatch_input (&mut self) -> bool {
+    pub fn dispatch_input (&mut self) -> Result<(), WinitInputError> {
         self.input.borrow_mut()
             .dispatch_new_events(|event| self.controller.process_input_event(event))
-            .is_ok()
     }
-    pub fn dispatch_event_loop (&mut self) -> bool {
+    pub fn dispatch_event_loop (&mut self) -> Result<(), std::io::Error> {
         self.event_loop.clone().borrow_mut()
             .dispatch(Some(Duration::from_millis(16)), self)
-            .is_ok()
     }
     pub fn draw (&mut self) {
         let result = {
@@ -191,5 +196,19 @@ impl App {
     pub fn refresh (&self) {
         self.compositor.window_map.borrow_mut().refresh();
         self.compositor.output_map.borrow_mut().refresh();
+    }
+    pub fn x11_ready (
+        &mut self,
+        conn:   UnixStream,
+        client: Client,
+        handle: &LoopHandle<'static, App>
+    ) -> Result<(), Box<dyn Error>> {
+        info!(self.log, "XWayland ready, launching startup processes...");
+        self.compositor.x11_ready(conn, client, handle)?;
+        for command in self.startup.iter_mut() {
+            info!(self.log, "Launching {command:?}");
+            command.spawn().unwrap();
+        }
+        Ok(())
     }
 }

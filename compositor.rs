@@ -23,11 +23,9 @@ impl Compositor {
         let window_map = window_map.clone();
         let output_map = Rc::new(RefCell::new(OutputMap::new(&log, &display, &window_map)));
 
-        compositor_init(
-            &mut *display.borrow_mut(),
-            |surface, mut data| data.get::<App>().unwrap().compositor.commit(&surface),
-            log.clone()
-        );
+        compositor_init(&mut *display.borrow_mut(), move |surface, mut data| {
+            data.get::<App>().unwrap().compositor.commit(&surface)
+        }, log.clone());
 
         let (xwayland, channel) = XWayland::new(event_loop.handle(), display.clone(), log.clone());
 
@@ -41,66 +39,53 @@ impl Compositor {
 
         let handle1 = event_loop.handle();
         let handle2 = event_loop.handle();
-        let log = compositor.log.clone();
         handle1.insert_source(channel, move |event, _, state| {
-            debug!(log, "XWaylandEvent: {:?}", event);
             match event {
                 XWaylandEvent::Ready { connection, client }
-                    => state.compositor.x11_ready(connection, client, &handle2).unwrap(),
+                    => state.x11_ready(connection, client, &handle2).unwrap(),
                 XWaylandEvent::Exited
                     => state.compositor.x11_exited().unwrap(),
-            }
+            };
         })?;
 
-        let log = compositor.log.clone();
-        let _ = xdg_shell_init(
-            &mut *display.borrow_mut(),
-            move |event, mut state| {
-                debug!(log, "XDGEvent: {:?}", event);
-                match event {
-                    XdgRequest::NewToplevel { surface }
-                        => state.get::<App>().unwrap().compositor.xdg_new_toplevel(surface),
-                    XdgRequest::NewPopup { surface }
-                        => state.get::<App>().unwrap().compositor.xdg_new_popup(surface),
-                    XdgRequest::Move { surface, seat, serial, }
-                        => state.get::<App>().unwrap().compositor.xdg_move(&surface, seat, serial),
-                    XdgRequest::Resize { surface, seat, serial, edges }
-                        => state.get::<App>().unwrap().compositor.xdg_resize(&surface, seat, serial, edges),
-                    XdgRequest::AckConfigure { surface, configure: Configure::Toplevel(configure), .. }
-                        => state.get::<App>().unwrap().compositor.xdg_ack_configure(&surface, configure),
-                    XdgRequest::Fullscreen { surface, output, .. }
-                        => state.get::<App>().unwrap().compositor.xdg_fullscreen(&surface, output),
-                    XdgRequest::UnFullscreen { surface }
-                        => state.get::<App>().unwrap().compositor.xdg_unfullscreen(&surface),
-                    XdgRequest::Maximize { surface }
-                        => state.get::<App>().unwrap().compositor.xdg_maximize(&surface),
-                    XdgRequest::UnMaximize { surface }
-                        => state.get::<App>().unwrap().compositor.xdg_unmaximize(&surface),
-                    _ => (),
-                }
-            },
-            compositor.log.clone()
-        );
+        xdg_shell_init(&mut *display.borrow_mut(), move |event, mut state| {
+            match event {
+                XdgRequest::NewToplevel { surface }
+                    => state.get::<App>().unwrap().compositor.xdg_new_toplevel(surface),
+                XdgRequest::NewPopup { surface }
+                    => state.get::<App>().unwrap().compositor.xdg_new_popup(surface),
+                XdgRequest::Move { surface, seat, serial, }
+                    => state.get::<App>().unwrap().compositor.xdg_move(&surface, seat, serial),
+                XdgRequest::Resize { surface, seat, serial, edges }
+                    => state.get::<App>().unwrap().compositor.xdg_resize(&surface, seat, serial, edges),
+                XdgRequest::AckConfigure { surface, configure: Configure::Toplevel(configure), .. }
+                    => state.get::<App>().unwrap().compositor.xdg_ack_configure(&surface, configure),
+                XdgRequest::Fullscreen { surface, output, .. }
+                    => state.get::<App>().unwrap().compositor.xdg_fullscreen(&surface, output),
+                XdgRequest::UnFullscreen { surface }
+                    => state.get::<App>().unwrap().compositor.xdg_unfullscreen(&surface),
+                XdgRequest::Maximize { surface }
+                    => state.get::<App>().unwrap().compositor.xdg_maximize(&surface),
+                XdgRequest::UnMaximize { surface }
+                    => state.get::<App>().unwrap().compositor.xdg_unmaximize(&surface),
+                _ => (),
+            };
+        }, compositor.log.clone());
 
         let log = compositor.log.clone();
-        let _ = wl_shell_init(
-            &mut *display.borrow_mut(),
-            move |req: ShellRequest, mut state| {
-                debug!(log, "WL Event: {:?}", req);
-                match req {
-                    ShellRequest::SetKind { surface, kind: ShellSurfaceKind::Toplevel, }
-                        => state.get::<App>().unwrap().compositor.set_toplevel(surface),
-                    ShellRequest::SetKind { surface, kind: ShellSurfaceKind::Fullscreen { output, .. } }
-                        => state.get::<App>().unwrap().compositor.set_fullscreen(surface, output),
-                    ShellRequest::Move { surface, seat, serial }
-                        => state.get::<App>().unwrap().compositor.shell_move(surface, seat, serial),
-                    ShellRequest::Resize { surface, seat, serial, edges, }
-                        => state.get::<App>().unwrap().compositor.shell_resize(surface, seat, serial, edges),
-                        _ => (),
-                }
-            },
-            compositor.log.clone()
-        );
+        wl_shell_init(&mut *display.borrow_mut(), move |req: ShellRequest, mut state| {
+            match req {
+                ShellRequest::SetKind { surface, kind: ShellSurfaceKind::Toplevel, }
+                    => state.get::<App>().unwrap().compositor.set_toplevel(surface),
+                ShellRequest::SetKind { surface, kind: ShellSurfaceKind::Fullscreen { output, .. } }
+                    => state.get::<App>().unwrap().compositor.set_fullscreen(surface, output),
+                ShellRequest::Move { surface, seat, serial }
+                    => state.get::<App>().unwrap().compositor.shell_move(surface, seat, serial),
+                ShellRequest::Resize { surface, seat, serial, edges, }
+                    => state.get::<App>().unwrap().compositor.shell_resize(surface, seat, serial, edges),
+                    _ => (),
+            }
+        }, compositor.log.clone());
 
         Ok(compositor)
     }
@@ -133,7 +118,6 @@ impl Compositor {
     pub fn xdg_new_toplevel (&self, surface: ToplevelSurface) {
         // place the window at a random location on the primary output
         // or if there is not output in a [0;800]x[0;800] square
-        use rand::distributions::{Distribution, Uniform};
         let output_geometry = self.output_map
             .borrow().with_primary().map(|o| o.geometry())
             .unwrap_or_else(|| Rectangle::from_loc_and_size((0, 0), (800, 800)));
@@ -393,7 +377,6 @@ impl Compositor {
     /// place the window at a random location on the primary output
     /// or if there is not output in a [0;800]x[0;800] square
     pub fn set_toplevel (&self, surface: ShellSurface) {
-        use rand::distributions::{Distribution, Uniform};
         let output_geometry = self.output_map.borrow().with_primary().map(|o| o.geometry())
             .unwrap_or_else(|| Rectangle::from_loc_and_size((0, 0), (800, 800)));
         let max_x =
@@ -491,8 +474,8 @@ impl Compositor {
         conn.flush()?;
         let conn = Rc::new(conn);
         self.x11state = Some(X11State {
-            conn:     Rc::clone(&conn),
-            atoms:    atoms,
+            conn: Rc::clone(&conn),
+            atoms,
             unpaired: Default::default()
         });
         handle.insert_source(X11Source::new(conn), move |events, _, state| {
@@ -509,7 +492,6 @@ impl Compositor {
             warn!(self.log, "X11: Got event while not ready: {:?}", event);
             return Ok(())
         }
-        debug!(self.log, "X11: Got event {:?}", event);
         let X11State { conn, atoms, unpaired } = self.x11state.as_ref().unwrap();
         match event {
             X11Event::ConfigureRequest(r) => {
@@ -589,7 +571,6 @@ impl Compositor {
         surface:  WlSurface,
         location: Point<i32, Logical>
     ) {
-        debug!(self.log, "Matched X11 surface {:x?} to {:x?}", window, surface);
         if give_role(&surface, "x11_surface").is_err() {
             // It makes no sense to post a protocol error here since that would only kill Xwayland
             error!(self.log, "Surface {:x?} already has a role?!", surface);
@@ -599,7 +580,7 @@ impl Compositor {
     }
 
     pub fn commit (&mut self, surface: &WlSurface) {
-        self.commit_x11(surface);
+        //self.commit_x11(surface);
         if !is_sync_subsurface(surface) {
             self.commit_non_sync_subsurface(surface);
         }
@@ -654,8 +635,10 @@ impl Compositor {
     }
 
     fn commit_toplevel_resize (&self, window_map: &mut WindowMap, surface: &WlSurface, toplevel: &SurfaceKind) {
+        // Don't move this line into the closure passed `with_states` -
+        // method already uses with_states internally and nesting them deadlocks the internal futex
+        let geometry = window_map.geometry(&toplevel).expect("Missing top-level geometry.");
         if let Some(location) = with_states(surface, |states| {
-            let geometry = window_map.geometry(&toplevel).unwrap();
             let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
             let mut new_location = None;
             // If the window is being resized by top or left, its location must be adjusted
@@ -1117,6 +1100,7 @@ impl OutputMap {
 
 #[derive(Debug)]
 struct Window {
+    log: Logger,
     pub location: Point<i32, Logical>,
     /// A bounding box over this window and its children.
     ///
@@ -1127,6 +1111,16 @@ struct Window {
 }
 
 impl Window {
+
+    fn new (log: &Logger, location: Point<i32, Logical>, toplevel: SurfaceKind) -> Self {
+        Self {
+            log: log.clone(),
+            location,
+            toplevel,
+            bbox: Rectangle::default()
+        }
+    }
+
     /// Finds the topmost surface under this point if any and returns it together with the location of this
     /// surface.
     fn matching(&self, point: Point<f64, Logical>) -> Option<(wl_surface::WlSurface, Point<i32, Logical>)> {
@@ -1194,13 +1188,12 @@ impl Window {
     }
 
     /// Returns the geometry of this window.
+    /// It's the set geometry with the full bounding box as the fallback.
     pub fn geometry(&self) -> Rectangle<i32, Logical> {
-        // It's the set geometry with the full bounding box as the fallback.
-        with_states(self.toplevel.get_surface().unwrap(), |states| {
-            states.cached_state.current::<SurfaceCachedState>().geometry
-        })
-        .unwrap()
-        .unwrap_or(self.bbox)
+        let surface = self.toplevel.get_surface().unwrap();
+        let get_geometry = |data: &smithay::wayland::compositor::SurfaceData|{
+            data.cached_state.current::<SurfaceCachedState>().geometry};
+        with_states(surface, get_geometry).unwrap().unwrap_or(self.bbox)
     }
 
     /// Sends the frame callback to all the subsurfaces in this
@@ -1235,7 +1228,7 @@ impl WindowMap {
     }
 
     pub fn insert(&mut self, toplevel: SurfaceKind, location: Point<i32, Logical>) {
-        let mut window = Window {location, bbox: Rectangle::default(), toplevel};
+        let mut window = Window::new(&self.log, location, toplevel);
         window.self_update();
         self.windows.insert(0, window);
     }
@@ -1359,7 +1352,8 @@ impl WindowMap {
 
     /// Returns the geometry of the toplevel, if it exists.
     pub fn geometry(&self, toplevel: &SurfaceKind) -> Option<Rectangle<i32, Logical>> {
-        self.windows.iter().find(|w| &w.toplevel == toplevel).map(|w| w.geometry())
+        let window = self.windows.iter().find(|w| &w.toplevel == toplevel);
+        window.map(|w| w.geometry())
     }
 
     pub fn send_frames(&self, time: u32) {

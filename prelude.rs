@@ -15,11 +15,13 @@ pub(crate) use std::{
     time::{Instant, Duration},
 };
 
-pub(crate) use slog::{Logger, Drain, o, warn, error, info, debug};
+pub(crate) use slog::{Logger, Drain, o, warn, error, info, debug, trace};
 
 pub(crate) use slog_scope::GlobalLoggerGuard;
 
 pub(crate) use image::{self, ImageBuffer, Rgba};
+
+pub(crate) use rand::distributions::{Distribution, Uniform};
 
 pub(crate) use smithay::{
     backend::{
@@ -63,7 +65,8 @@ pub(crate) use smithay::{
         winit::{
             self,
             WinitGraphicsBackend,
-            WinitInputBackend
+            WinitInputBackend,
+            WinitInputError
         },
     },
     reexports::{

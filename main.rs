@@ -11,12 +11,13 @@ use crate::app::App;
 
 fn main () -> Result<(), Box<dyn Error>> {
     let (log, _guard) = init_log();
-    Ok(App::init(log)?
+    App::init(log)?
         .add_output(OUTPUT_NAME)
         .socket(true)
-        .run(&mut Command::new("kitty"))
-        .run(Command::new("chromium").arg("--ozone-platform=wayland"))
-        .start())
+        .run(Command::new("glxgears"))
+        .run(Command::new("kitty"))
+        //.run(*Command::new("chromium").arg("--ozone-platform=wayland"))
+        .start()
 }
 
 fn init_log () -> (slog::Logger, GlobalLoggerGuard) {
