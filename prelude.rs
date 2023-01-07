@@ -4,12 +4,12 @@ pub const BACKGROUND: &str = "data/cork2.png";
 
 pub(crate) use std::{
     cell::{Cell, RefCell},
-    collections::HashMap, 
+    collections::{HashMap, Entry},
     convert::TryFrom, 
     error::Error,
     io::{Error as IOError, ErrorKind, Result as IOResult},
-    os::unix::{io::AsRawFd, net::UnixStream},
-    path::Path,
+    os::unix::{io::{RawFd, AsRawFd}, net::UnixStream},
+    path::{Path, PathBuf},
     process::Command,
     rc::Rc,
     sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
@@ -62,12 +62,6 @@ pub(crate) use smithay::{
                 Gles2Texture,
                 Gles2Error
             }
-        },
-        winit::{
-            self,
-            WinitGraphicsBackend,
-            WinitInputBackend,
-            WinitInputError
         },
     },
     reexports::{

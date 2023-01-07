@@ -15,6 +15,7 @@ pub struct App<T: Backend> {
     pub compositor:  Rc<RefCell<Compositor<T>>>,
     pub controller:  Controller<T>,
     pub workspace:   Rc<RefCell<Workspace>>,
+    pub handle:      LoopHandle<'static, Self>
 }
 
 impl<T: Backend + 'static> App<T> {
@@ -43,6 +44,7 @@ impl<T: Backend + 'static> App<T> {
             compositor,
             controller,
             workspace,
+            handle: event_loop.handle()
         };
         T::post_init(&mut app, event_loop);
         Ok(app)

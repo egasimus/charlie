@@ -202,30 +202,37 @@ impl<T: Backend + 'static> Compositor<T> {
         }
     }
 
+    /// Is the output list empty?
     pub fn is_empty(&self) -> bool {
         self.outputs.is_empty()
     }
 
+    /// Find an output by a function
     pub fn find<F: FnMut(&&Output) -> bool>(&self, f: F) -> Option<&Output> {
         self.outputs.iter().find(f)
     }
 
+    /// Returns the primary output, if exists
     pub fn with_primary(&self) -> Option<&Output> {
         self.outputs.get(0)
     }
 
+    /// Find output by its parent
     pub fn find_by_output(&self, output: &wl_output::WlOutput) -> Option<&Output> {
         self.find(|o| o.output.owns(output))
     }
 
+    /// Find output by name
     pub fn find_by_name<N: AsRef<str>>(&self, name: N) -> Option<&Output> {
         self.find(|o| o.name == name.as_ref())
     }
 
+    /// Find first output that contains given point
     pub fn find_by_position(&self, position: Point<i32, Logical>) -> Option<&Output> {
         self.find(|o| o.geometry().contains(position))
     }
 
+    /// Get the nth output, if exists
     pub fn find_by_index(&self, index: usize) -> Option<&Output> {
         self.outputs.get(index)
     }
