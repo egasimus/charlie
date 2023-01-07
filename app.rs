@@ -13,8 +13,7 @@ pub struct App {
     pub display:     Rc<RefCell<Display>>,
     pub renderer:    Rc<RefCell<WinitGraphicsBackend>>,
     pub input:       Rc<RefCell<WinitInputBackend>>,
-    pub windows:     Rc<RefCell<WindowMap>>,
-    pub compositor:  Compositor,
+    pub compositor:  Rc<RefCell<Compositor>>,
     pub controller:  Controller,
     pub workspace:   Rc<RefCell<Workspace>>,
 }
@@ -28,8 +27,7 @@ impl App {
         init_xdg_output_manager(&mut *display.borrow_mut(), log.clone());
         init_shm_global(&mut *display.borrow_mut(), vec![], log.clone());
         let running    = Arc::new(AtomicBool::new(true));
-        let windows    = Rc::new(RefCell::new(WindowMap::init(&log)));
-        let compositor = Compositor::init(&log, &display, &windows, &event_loop)?;
+        let compositor = Rc::new(RefCell::new(Compositor::init(&log, &display, &event_loop)?));
         let workspace  = Rc::new(RefCell::new(Workspace::init(&log, &renderer)?));
         let controller = Controller::init(&log, &running, &display, &compositor, &workspace);
         let app = Self {
@@ -42,7 +40,6 @@ impl App {
             display,
             renderer,
             input,
-            windows,
             compositor,
             controller,
             workspace,
@@ -116,7 +113,7 @@ impl App {
         self
     }
     pub fn add_output (&mut self, name: &str) -> &mut Self {
-        self.compositor.add_output(
+        self.compositor.borrow_mut().add_output(
             name,
             PhysicalProperties {
                 size: (0, 0).into(),
@@ -136,7 +133,7 @@ impl App {
         self
     }
     pub fn start (&mut self) -> Result<(), Box<dyn Error>> {
-        self.compositor.x11_start();
+        self.compositor.borrow_mut().x11_start();
         self.start_time = Instant::now();
         info!(self.log, "Initialization completed, starting the main loop.");
         while self.running() {
@@ -164,7 +161,7 @@ impl App {
             self.renderer.borrow_mut().render(|mut renderer, mut frame| {
                 // This is safe to do as with winit we are guaranteed to have exactly one output
                 frame.clear([0.8, 0.8, 0.8, 1.0])?;
-                self.compositor.draw(&mut renderer, &mut frame, &workspace)?;
+                self.compositor.borrow().draw(&mut renderer, &mut frame, &workspace)?;
                 self.controller.draw(&mut renderer, &mut frame, 1.0)?;
                 Ok(())
             }).map_err(Into::<SwapBuffersError>::into).and_then(|x| x)
@@ -179,10 +176,10 @@ impl App {
     }
     /// Send frame events so that client start drawing their next frame
     pub fn send_frames (&self, frames: u32) {
-        self.compositor.window_map.borrow().send_frames(frames);
+        self.compositor.borrow().window_map.borrow().send_frames(frames);
     }
     pub fn clear (&self) {
-        self.compositor.window_map.borrow_mut().clear()
+        self.compositor.borrow().window_map.borrow_mut().clear()
     }
     pub fn running (&self) -> bool {
         self.running.load(Ordering::SeqCst)
@@ -194,8 +191,7 @@ impl App {
         self.display.clone().borrow_mut().flush_clients(self);
     }
     pub fn refresh (&self) {
-        self.compositor.window_map.borrow_mut().refresh();
-        self.compositor.output_map.borrow_mut().refresh();
+        self.compositor.borrow_mut().refresh();
     }
     pub fn x11_ready (
         &mut self,
@@ -204,7 +200,7 @@ impl App {
         handle: &LoopHandle<'static, App>
     ) -> Result<(), Box<dyn Error>> {
         info!(self.log, "XWayland ready, launching startup processes...");
-        self.compositor.x11_ready(conn, client, handle)?;
+        self.compositor.borrow_mut().x11_ready(conn, client, handle)?;
         for command in self.startup.iter_mut() {
             info!(self.log, "Launching {command:?}");
             command.spawn().unwrap();

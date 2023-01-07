@@ -5,8 +5,9 @@ use crate::workspace::Workspace;
 
 pub struct Compositor {
     pub log:        Logger,
+    pub display:    Rc<RefCell<Display>>,
+    pub outputs:    Vec<Output>,
     pub window_map: Rc<RefCell<WindowMap>>,
-    pub output_map: Rc<RefCell<OutputMap>>,
     pub xwayland:   XWayland<App>,
     pub x11state:   Option<X11State>,
 }
@@ -16,25 +17,22 @@ impl Compositor {
     pub fn init (
         log:        &Logger,
         display:    &Rc<RefCell<Display>>,
-        window_map: &Rc<RefCell<WindowMap>>,
         event_loop: &EventLoop<'static, App>,
     ) -> Result<Self, Box<dyn Error>> {
 
-        let window_map = window_map.clone();
-        let output_map = Rc::new(RefCell::new(OutputMap::new(&log, &display, &window_map)));
-
         compositor_init(&mut *display.borrow_mut(), move |surface, mut data| {
-            data.get::<App>().unwrap().compositor.commit(&surface)
+            data.get::<App>().unwrap().compositor.borrow_mut().commit(&surface)
         }, log.clone());
 
         let (xwayland, channel) = XWayland::new(event_loop.handle(), display.clone(), log.clone());
 
         let compositor = Self {
-            log: log.clone(),
-            window_map,
-            output_map,
+            log:        log.clone(),
+            display:    Rc::clone(display),
+            outputs:    vec![],
+            window_map: Rc::new(RefCell::new(WindowMap::init(&log))),
+            x11state:   None,
             xwayland,
-            x11state: None
         };
 
         let handle1 = event_loop.handle();
@@ -44,45 +42,47 @@ impl Compositor {
                 XWaylandEvent::Ready { connection, client }
                     => state.x11_ready(connection, client, &handle2).unwrap(),
                 XWaylandEvent::Exited
-                    => state.compositor.x11_exited().unwrap(),
+                    => state.compositor.borrow_mut().x11_exited().unwrap(),
             };
         })?;
 
         xdg_shell_init(&mut *display.borrow_mut(), move |event, mut state| {
+            let compositor = state.get::<App>().unwrap().compositor.borrow_mut();
             match event {
                 XdgRequest::NewToplevel { surface }
-                    => state.get::<App>().unwrap().compositor.xdg_new_toplevel(surface),
+                    => compositor.xdg_new_toplevel(surface),
                 XdgRequest::NewPopup { surface }
-                    => state.get::<App>().unwrap().compositor.xdg_new_popup(surface),
+                    => compositor.xdg_new_popup(surface),
                 XdgRequest::Move { surface, seat, serial, }
-                    => state.get::<App>().unwrap().compositor.xdg_move(&surface, seat, serial),
+                    => compositor.xdg_move(&surface, seat, serial),
                 XdgRequest::Resize { surface, seat, serial, edges }
-                    => state.get::<App>().unwrap().compositor.xdg_resize(&surface, seat, serial, edges),
+                    => compositor.xdg_resize(&surface, seat, serial, edges),
                 XdgRequest::AckConfigure { surface, configure: Configure::Toplevel(configure), .. }
-                    => state.get::<App>().unwrap().compositor.xdg_ack_configure(&surface, configure),
+                    => compositor.xdg_ack_configure(&surface, configure),
                 XdgRequest::Fullscreen { surface, output, .. }
-                    => state.get::<App>().unwrap().compositor.xdg_fullscreen(&surface, output),
+                    => compositor.xdg_fullscreen(&surface, output),
                 XdgRequest::UnFullscreen { surface }
-                    => state.get::<App>().unwrap().compositor.xdg_unfullscreen(&surface),
+                    => compositor.xdg_unfullscreen(&surface),
                 XdgRequest::Maximize { surface }
-                    => state.get::<App>().unwrap().compositor.xdg_maximize(&surface),
+                    => compositor.xdg_maximize(&surface),
                 XdgRequest::UnMaximize { surface }
-                    => state.get::<App>().unwrap().compositor.xdg_unmaximize(&surface),
+                    => compositor.xdg_unmaximize(&surface),
                 _ => (),
             };
         }, compositor.log.clone());
 
         let log = compositor.log.clone();
         wl_shell_init(&mut *display.borrow_mut(), move |req: ShellRequest, mut state| {
+            let compositor = state.get::<App>().unwrap().compositor.borrow_mut();
             match req {
                 ShellRequest::SetKind { surface, kind: ShellSurfaceKind::Toplevel, }
-                    => state.get::<App>().unwrap().compositor.set_toplevel(surface),
+                    => compositor.set_toplevel(surface),
                 ShellRequest::SetKind { surface, kind: ShellSurfaceKind::Fullscreen { output, .. } }
-                    => state.get::<App>().unwrap().compositor.set_fullscreen(surface, output),
+                    => compositor.set_fullscreen(surface, output),
                 ShellRequest::Move { surface, seat, serial }
-                    => state.get::<App>().unwrap().compositor.shell_move(surface, seat, serial),
+                    => compositor.shell_move(surface, seat, serial),
                 ShellRequest::Resize { surface, seat, serial, edges, }
-                    => state.get::<App>().unwrap().compositor.shell_resize(surface, seat, serial, edges),
+                    => compositor.shell_resize(surface, seat, serial, edges),
                     _ => (),
             }
         }, compositor.log.clone());
@@ -91,9 +91,138 @@ impl Compositor {
     }
 
     pub fn add_output (
-        &self, name: impl AsRef<str>, physical: PhysicalProperties, mode: OutputMode
-    ) {
-        self.output_map.borrow_mut().add(name, physical, mode);
+        &mut self,
+        name:     impl AsRef<str>,
+        physical: PhysicalProperties,
+        mode:     OutputMode
+    ) -> &Output {
+        // Append the output to the end of the existing
+        // outputs by placing it after the current overall
+        // width
+        let location = (self.width(), 0);
+        let output = Output::new(
+            name,
+            location.into(),
+            &mut *self.display.borrow_mut(),
+            physical,
+            mode,
+            self.log.clone(),
+        );
+        self.outputs.push(output);
+        // We call arrange here albeit the output is only appended and
+        // this would not affect windows, but arrange could re-organize
+        // outputs from a configuration.
+        self.arrange();
+        self.outputs.last().unwrap()
+    }
+
+    pub fn width(&self) -> i32 {
+        // This is a simplification, we only arrange the outputs on the y axis side-by-side
+        // so that the total width is simply the sum of all output widths.
+        self.outputs.iter().fold(0, |acc, output| acc + output.size().w)
+    }
+
+    pub fn arrange(&mut self) {
+        // First recalculate the outputs location
+        let mut output_x = 0;
+        for output in self.outputs.iter_mut() {
+            let output_x_shift = output_x - output.location.x;
+            // If the scale changed we shift all windows on that output
+            // so that the location of the window will stay the same on screen
+            if output_x_shift != 0 {
+                let mut window_map = self.window_map.borrow_mut();
+                for surface in output.surfaces.iter() {
+                    let toplevel = window_map.find(surface);
+                    if let Some(toplevel) = toplevel {
+                        let current_location = window_map.location(&toplevel);
+                        if let Some(mut location) = current_location {
+                            if output.geometry().contains(location) {
+                                location.x += output_x_shift;
+                                window_map.set_location(&toplevel, location);
+                            }
+                        }
+                    }
+                }
+            }
+            output.location.x = output_x;
+            output.location.y = 0;
+            output.output.change_current_state(None, None, None, Some(output.location));
+            output_x += output.size().w;
+        }
+        // Check if any windows are now out of outputs range
+        // and move them to the primary output
+        let primary_output_location = self.with_primary().map(|o| o.location()).unwrap_or_default();
+        let mut window_map = self.window_map.borrow_mut();
+        // TODO: This is a bit unfortunate, we save the windows in a temp vector
+        // cause we can not call window_map.set_location within the closure.
+        let mut windows_to_move = Vec::new();
+        window_map.with_windows_from_bottom_to_top(|kind, _, &bbox| {
+            let within_outputs = self.outputs.iter().any(|o| o.geometry().overlaps(bbox));
+            if !within_outputs {
+                windows_to_move.push((kind.to_owned(), primary_output_location));
+            }
+        });
+        for (window, location) in windows_to_move.drain(..) {
+            window_map.set_location(&window, location);
+        }
+        // Update the size and location for maximized and fullscreen windows
+        window_map.with_windows_from_bottom_to_top(|kind, location, _| {
+            if let SurfaceKind::Xdg(xdg) = kind {
+                if let Some(state) = xdg.current_state() {
+                    if state.states.contains(xdg_toplevel::State::Maximized)
+                        || state.states.contains(xdg_toplevel::State::Fullscreen)
+                    {
+                        let output_geometry = if let Some(output) = state.fullscreen_output.as_ref() {
+                            self.find_by_output(output).map(|o| o.geometry())
+                        } else {
+                            self.find_by_position(location).map(|o| o.geometry())
+                        };
+                        if let Some(geometry) = output_geometry {
+                            if location != geometry.loc {
+                                windows_to_move.push((kind.to_owned(), geometry.loc));
+                            }
+                            let res = xdg.with_pending_state(|pending_state| {
+                                pending_state.size = Some(geometry.size);
+                            });
+                            if res.is_ok() {
+                                xdg.send_configure();
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        for (window, location) in windows_to_move.drain(..) {
+            window_map.set_location(&window, location);
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.outputs.is_empty()
+    }
+
+    pub fn find<F: FnMut(&&Output) -> bool>(&self, f: F) -> Option<&Output> {
+        self.outputs.iter().find(f)
+    }
+
+    pub fn with_primary(&self) -> Option<&Output> {
+        self.outputs.get(0)
+    }
+
+    pub fn find_by_output(&self, output: &wl_output::WlOutput) -> Option<&Output> {
+        self.find(|o| o.output.owns(output))
+    }
+
+    pub fn find_by_name<N: AsRef<str>>(&self, name: N) -> Option<&Output> {
+        self.find(|o| o.name == name.as_ref())
+    }
+
+    pub fn find_by_position(&self, position: Point<i32, Logical>) -> Option<&Output> {
+        self.find(|o| o.geometry().contains(position))
+    }
+
+    pub fn find_by_index(&self, index: usize) -> Option<&Output> {
+        self.outputs.get(index)
     }
 
     pub fn draw (
@@ -101,7 +230,7 @@ impl Compositor {
     )
         -> Result<(), SwapBuffersError>
     {
-        for output in self.output_map.borrow().outputs.iter() {
+        for output in self.outputs.iter() {
             let mut geometry = output.geometry();
             let scale = output.scale();
             workspace.draw(frame, geometry.size, scale)?;
@@ -118,8 +247,7 @@ impl Compositor {
     pub fn xdg_new_toplevel (&self, surface: ToplevelSurface) {
         // place the window at a random location on the primary output
         // or if there is not output in a [0;800]x[0;800] square
-        let output_geometry = self.output_map
-            .borrow().with_primary().map(|o| o.geometry())
+        let output_geometry = self.with_primary().map(|o| o.geometry())
             .unwrap_or_else(|| Rectangle::from_loc_and_size((0, 0), (800, 800)));
         let max_x = output_geometry.loc.x + (((output_geometry.size.w as f32) / 3.0) * 2.0) as i32;
         let max_y = output_geometry.loc.y + (((output_geometry.size.h as f32) / 3.0) * 2.0) as i32;
@@ -343,9 +471,7 @@ impl Compositor {
             surface.get_surface()
                 .and_then(|s| window_map.find(s))
                 .and_then(|k| window_map.location(&k))
-                .and_then(|position| {
-                    self.output_map.borrow().find_by_position(position).map(|o| o.geometry())
-                })
+                .and_then(|position| self.find_by_position(position).map(|o| o.geometry()))
         };
         if let Some(geometry) = output_geometry {
             if let Some(surface) = surface.get_surface() {
@@ -377,7 +503,7 @@ impl Compositor {
     /// place the window at a random location on the primary output
     /// or if there is not output in a [0;800]x[0;800] square
     pub fn set_toplevel (&self, surface: ShellSurface) {
-        let output_geometry = self.output_map.borrow().with_primary().map(|o| o.geometry())
+        let output_geometry = self.with_primary().map(|o| o.geometry())
             .unwrap_or_else(|| Rectangle::from_loc_and_size((0, 0), (800, 800)));
         let max_x =
             output_geometry.loc.x + (((output_geometry.size.w as f32) / 3.0) * 2.0) as i32;
@@ -414,22 +540,20 @@ impl Compositor {
         // First test if a specific output has been requested
         // if the requested output is not found ignore the request
         if let Some(wl_output) = wl_output {
-            return self.output_map.borrow().find_by_output(&wl_output)
-                .map(|o| o.geometry());
+            return self.find_by_output(&wl_output).map(|o| o.geometry());
         }
         // There is no output preference, try to find the output
         // where the window is currently active
         let window_location = self.window_map.borrow().find(wl_surface)
             .and_then(|kind| self.window_map.borrow().location(&kind));
         if let Some(location) = window_location {
-            let window_output = self.output_map.borrow().find_by_position(location)
-                .map(|o| o.geometry());
+            let window_output = self.find_by_position(location).map(|o| o.geometry());
             if let Some(result) = window_output {
                 return Some(result);
             }
         }
         // Fallback to primary output
-        self.output_map.borrow().with_primary().map(|o| o.geometry())
+        self.with_primary().map(|o| o.geometry())
     }
 
     pub fn x11_start (&self) {
@@ -480,7 +604,7 @@ impl Compositor {
         });
         handle.insert_source(X11Source::new(conn), move |events, _, state| {
             for event in events.into_iter() {
-                state.compositor.x11_handle(event, &client)?;
+                state.compositor.borrow_mut().x11_handle(event, &client)?;
             }
             Ok(())
         })?;
@@ -687,6 +811,189 @@ impl Compositor {
         }
     }
 
+    pub fn retain (&mut self, f: impl FnMut(&Output) -> bool) {
+        self.outputs.retain(f);
+        self.arrange();
+    }
+
+    pub fn height(&self, x: i32) -> Option<i32> {
+        // This is a simplification, we only arrange the outputs on the y axis side-by-side
+        self.outputs
+            .iter()
+            .find(|output| {
+                let geometry = output.geometry();
+                x >= geometry.loc.x && x < (geometry.loc.x + geometry.size.w)
+            })
+            .map(|output| output.size().h)
+    }
+
+    pub fn update(
+        &mut self, mode: Option<OutputMode>, scale: Option<f32>, mut f: impl FnMut(&Output) -> bool
+    ) {
+        let output = self.outputs.iter_mut().find(|o| f(&**o));
+        if let Some(output) = output {
+            if let Some(mode) = mode {
+                output.output.delete_mode(output.current_mode);
+                output.output.change_current_state(
+                    Some(mode), None, Some(output.output_scale), None);
+                output.output.set_preferred(mode);
+                output.current_mode = mode;
+            }
+            if let Some(scale) = scale {
+                // Calculate in which direction the scale changed
+                let rescale = output.scale() / scale;
+                {
+                    // We take the current location of our toplevels and move them
+                    // to the same location using the new scale
+                    let mut window_map = self.window_map.borrow_mut();
+                    for surface in output.surfaces.iter() {
+                        let toplevel = window_map.find(surface);
+
+                        if let Some(toplevel) = toplevel {
+                            let current_location = window_map.location(&toplevel);
+
+                            if let Some(location) = current_location {
+                                let output_geometry = output.geometry();
+
+                                if output_geometry.contains(location) {
+                                    let mut toplevel_output_location =
+                                        (location - output_geometry.loc).to_f64();
+                                    toplevel_output_location.x *= rescale as f64;
+                                    toplevel_output_location.y *= rescale as f64;
+                                    window_map.set_location(
+                                        &toplevel,
+                                        output_geometry.loc + toplevel_output_location.to_i32_round(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                let output_scale = scale.round() as i32;
+                output.scale = scale;
+                if output.output_scale != output_scale {
+                    output.output_scale = output_scale;
+                    output.output.change_current_state(
+                        Some(output.current_mode),
+                        None,
+                        Some(output_scale),
+                        None,
+                    );
+                }
+            }
+        }
+
+        self.arrange();
+    }
+
+    pub fn update_by_name(
+        &mut self, mode: Option<OutputMode>, scale: Option<f32>, name: impl AsRef<str>
+    ) {
+        self.update(mode, scale, |o| o.name() == name.as_ref())
+    }
+
+    pub fn update_scale_by_name(
+        &mut self, scale: f32, name: impl AsRef<str>
+    ) {
+        self.update_by_name(None, Some(scale), name)
+    }
+
+    pub fn update_mode_by_name(
+        &mut self, mode: OutputMode, name: impl AsRef<str>
+    ) {
+        self.update_by_name(Some(mode), None, name)
+    }
+
+    pub fn clear (&self) {
+        self.window_map.borrow_mut().clear()
+    }
+
+    /// Send frame events so that client start drawing their next frame
+    pub fn send_frames (&self, frames: u32) {
+        self.window_map.borrow().send_frames(frames);
+    }
+
+    pub fn refresh (&mut self) {
+        self.window_map.borrow_mut().refresh();
+        // Clean-up dead surfaces
+        self.outputs.iter_mut()
+            .for_each(|o| o.surfaces.retain(|s| s.as_ref().is_alive()));
+        self.window_map.borrow().with_windows_from_bottom_to_top(|kind, location, &bbox| {
+            for output in self.outputs.iter_mut() {
+                // Check if the bounding box of the toplevel intersects with
+                // the output, if not no surface in the tree can intersect with
+                // the output.
+                if !output.geometry().overlaps(bbox) {
+                    if let Some(surface) = kind.get_surface() {
+                        with_surface_tree_downward(
+                            surface,
+                            (),
+                            |_, _, _| TraversalAction::DoChildren(()),
+                            |wl_surface, _, _| {
+                                if output.surfaces.contains(wl_surface) {
+                                    output.output.leave(wl_surface);
+                                    output.surfaces.retain(|s| s != wl_surface);
+                                }
+                            },
+                            |_, _, _| true,
+                        )
+                    }
+                    continue;
+                }
+                if let Some(surface) = kind.get_surface() {
+                    with_surface_tree_downward(
+                        surface,
+                        location,
+                        |_, states, location| {
+                            let mut location = *location;
+                            let data = states.data_map.get::<RefCell<SurfaceData>>();
+                            if data.is_some() {
+                                if states.role == Some("subsurface") {
+                                    let current = states.cached_state.current::<SubsurfaceCachedState>();
+                                    location += current.location;
+                                }
+                                TraversalAction::DoChildren(location)
+                            } else {
+                                // If the parent surface is unmapped, then the child surfaces are hidden as
+                                // well, no need to consider them here.
+                                TraversalAction::SkipChildren
+                            }
+                        },
+                        |wl_surface, states, &loc| {
+                            let data = states.data_map.get::<RefCell<SurfaceData>>();
+
+                            if let Some(size) = data.and_then(|d| d.borrow().size()) {
+                                let surface_rectangle = Rectangle { loc, size };
+
+                                if output.geometry().overlaps(surface_rectangle) {
+                                    // We found a matching output, check if we already sent enter
+                                    if !output.surfaces.contains(wl_surface) {
+                                        output.output.enter(wl_surface);
+                                        output.surfaces.push(wl_surface.clone());
+                                    }
+                                } else {
+                                    // Surface does not match output, if we sent enter earlier
+                                    // we should now send leave
+                                    if output.surfaces.contains(wl_surface) {
+                                        output.output.leave(wl_surface);
+                                        output.surfaces.retain(|s| s != wl_surface);
+                                    }
+                                }
+                            } else {
+                                // Maybe the the surface got unmapped, send leave on output
+                                if output.surfaces.contains(wl_surface) {
+                                    output.output.leave(wl_surface);
+                                    output.surfaces.retain(|s| s != wl_surface);
+                                }
+                            }
+                        },
+                        |_, _, _| true,
+                    )
+                }
+            }
+        });
+    }
+
 }
 
 #[derive(Debug)]
@@ -774,331 +1081,21 @@ impl Drop for Output {
     }
 }
 
-pub struct OutputMap {
-    log:         Logger,
-    display:     Rc<RefCell<Display>>,
-    pub outputs: Vec<Output>,
-    window_map:  Rc<RefCell<WindowMap>>,
-}
+//impl OutputMap {
+    //pub fn new(
+        //log:        &Logger,
+        //display:    &Rc<RefCell<Display>>,
+        //window_map: &Rc<RefCell<WindowMap>>,
+    //) -> Self {
+        //Self {
+            //display:    display.clone(),
+            //outputs:    Vec::new(),
+            //window_map: window_map.clone(),
+            //log:        log.clone(),
+        //}
+    //}
 
-impl OutputMap {
-    pub fn new(
-        log:        &Logger,
-        display:    &Rc<RefCell<Display>>,
-        window_map: &Rc<RefCell<WindowMap>>,
-    ) -> Self {
-        Self {
-            display:    display.clone(),
-            outputs:    Vec::new(),
-            window_map: window_map.clone(),
-            log:        log.clone(),
-        }
-    }
-
-    pub fn arrange(&mut self) {
-        // First recalculate the outputs location
-        let mut output_x = 0;
-        for output in self.outputs.iter_mut() {
-            let output_x_shift = output_x - output.location.x;
-            // If the scale changed we shift all windows on that output
-            // so that the location of the window will stay the same on screen
-            if output_x_shift != 0 {
-                let mut window_map = self.window_map.borrow_mut();
-                for surface in output.surfaces.iter() {
-                    let toplevel = window_map.find(surface);
-                    if let Some(toplevel) = toplevel {
-                        let current_location = window_map.location(&toplevel);
-                        if let Some(mut location) = current_location {
-                            if output.geometry().contains(location) {
-                                location.x += output_x_shift;
-                                window_map.set_location(&toplevel, location);
-                            }
-                        }
-                    }
-                }
-            }
-            output.location.x = output_x;
-            output.location.y = 0;
-            output.output.change_current_state(None, None, None, Some(output.location));
-            output_x += output.size().w;
-        }
-        // Check if any windows are now out of outputs range
-        // and move them to the primary output
-        let primary_output_location = self.with_primary().map(|o| o.location()).unwrap_or_default();
-        let mut window_map = self.window_map.borrow_mut();
-        // TODO: This is a bit unfortunate, we save the windows in a temp vector
-        // cause we can not call window_map.set_location within the closure.
-        let mut windows_to_move = Vec::new();
-        window_map.with_windows_from_bottom_to_top(|kind, _, &bbox| {
-            let within_outputs = self.outputs.iter().any(|o| o.geometry().overlaps(bbox));
-            if !within_outputs {
-                windows_to_move.push((kind.to_owned(), primary_output_location));
-            }
-        });
-        for (window, location) in windows_to_move.drain(..) {
-            window_map.set_location(&window, location);
-        }
-        // Update the size and location for maximized and fullscreen windows
-        window_map.with_windows_from_bottom_to_top(|kind, location, _| {
-            if let SurfaceKind::Xdg(xdg) = kind {
-                if let Some(state) = xdg.current_state() {
-                    if state.states.contains(xdg_toplevel::State::Maximized)
-                        || state.states.contains(xdg_toplevel::State::Fullscreen)
-                    {
-                        let output_geometry = if let Some(output) = state.fullscreen_output.as_ref() {
-                            self.find_by_output(output).map(|o| o.geometry())
-                        } else {
-                            self.find_by_position(location).map(|o| o.geometry())
-                        };
-                        if let Some(geometry) = output_geometry {
-                            if location != geometry.loc {
-                                windows_to_move.push((kind.to_owned(), geometry.loc));
-                            }
-                            let res = xdg.with_pending_state(|pending_state| {
-                                pending_state.size = Some(geometry.size);
-                            });
-                            if res.is_ok() {
-                                xdg.send_configure();
-                            }
-                        }
-                    }
-                }
-            }
-        });
-        for (window, location) in windows_to_move.drain(..) {
-            window_map.set_location(&window, location);
-        }
-    }
-
-    pub fn add (
-        &mut self, name: impl AsRef<str>, physical: PhysicalProperties, mode: OutputMode
-    ) -> &Output {
-        // Append the output to the end of the existing
-        // outputs by placing it after the current overall
-        // width
-        let location = (self.width(), 0);
-        let output = Output::new(
-            name,
-            location.into(),
-            &mut *self.display.borrow_mut(),
-            physical,
-            mode,
-            self.log.clone(),
-        );
-        self.outputs.push(output);
-        // We call arrange here albeit the output is only appended and
-        // this would not affect windows, but arrange could re-organize
-        // outputs from a configuration.
-        self.arrange();
-        self.outputs.last().unwrap()
-    }
-
-    pub fn retain (&mut self, f: impl FnMut(&Output) -> bool) {
-        self.outputs.retain(f);
-        self.arrange();
-    }
-
-    pub fn width(&self) -> i32 {
-        // This is a simplification, we only arrange the outputs on the y axis side-by-side
-        // so that the total width is simply the sum of all output widths.
-        self.outputs.iter().fold(0, |acc, output| acc + output.size().w)
-    }
-
-    pub fn height(&self, x: i32) -> Option<i32> {
-        // This is a simplification, we only arrange the outputs on the y axis side-by-side
-        self.outputs
-            .iter()
-            .find(|output| {
-                let geometry = output.geometry();
-                x >= geometry.loc.x && x < (geometry.loc.x + geometry.size.w)
-            })
-            .map(|output| output.size().h)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.outputs.is_empty()
-    }
-
-    pub fn with_primary(&self) -> Option<&Output> {
-        self.outputs.get(0)
-    }
-
-    pub fn find<F: FnMut(&&Output) -> bool>(&self, f: F) -> Option<&Output> {
-        self.outputs.iter().find(f)
-    }
-
-    pub fn find_by_output(&self, output: &wl_output::WlOutput) -> Option<&Output> {
-        self.find(|o| o.output.owns(output))
-    }
-
-    pub fn find_by_name<N: AsRef<str>>(&self, name: N) -> Option<&Output> {
-        self.find(|o| o.name == name.as_ref())
-    }
-
-    pub fn find_by_position(&self, position: Point<i32, Logical>) -> Option<&Output> {
-        self.find(|o| o.geometry().contains(position))
-    }
-
-    pub fn find_by_index(&self, index: usize) -> Option<&Output> {
-        self.outputs.get(index)
-    }
-
-    pub fn update(
-        &mut self, mode: Option<OutputMode>, scale: Option<f32>, mut f: impl FnMut(&Output) -> bool
-    ) {
-        let output = self.outputs.iter_mut().find(|o| f(&**o));
-        if let Some(output) = output {
-            if let Some(mode) = mode {
-                output.output.delete_mode(output.current_mode);
-                output.output.change_current_state(
-                    Some(mode), None, Some(output.output_scale), None);
-                output.output.set_preferred(mode);
-                output.current_mode = mode;
-            }
-            if let Some(scale) = scale {
-                // Calculate in which direction the scale changed
-                let rescale = output.scale() / scale;
-                {
-                    // We take the current location of our toplevels and move them
-                    // to the same location using the new scale
-                    let mut window_map = self.window_map.borrow_mut();
-                    for surface in output.surfaces.iter() {
-                        let toplevel = window_map.find(surface);
-
-                        if let Some(toplevel) = toplevel {
-                            let current_location = window_map.location(&toplevel);
-
-                            if let Some(location) = current_location {
-                                let output_geometry = output.geometry();
-
-                                if output_geometry.contains(location) {
-                                    let mut toplevel_output_location =
-                                        (location - output_geometry.loc).to_f64();
-                                    toplevel_output_location.x *= rescale as f64;
-                                    toplevel_output_location.y *= rescale as f64;
-                                    window_map.set_location(
-                                        &toplevel,
-                                        output_geometry.loc + toplevel_output_location.to_i32_round(),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                let output_scale = scale.round() as i32;
-                output.scale = scale;
-                if output.output_scale != output_scale {
-                    output.output_scale = output_scale;
-                    output.output.change_current_state(
-                        Some(output.current_mode),
-                        None,
-                        Some(output_scale),
-                        None,
-                    );
-                }
-            }
-        }
-
-        self.arrange();
-    }
-
-    pub fn update_by_name(
-        &mut self, mode: Option<OutputMode>, scale: Option<f32>, name: impl AsRef<str>
-    ) {
-        self.update(mode, scale, |o| o.name() == name.as_ref())
-    }
-
-    pub fn update_scale_by_name(
-        &mut self, scale: f32, name: impl AsRef<str>
-    ) {
-        self.update_by_name(None, Some(scale), name)
-    }
-
-    pub fn update_mode_by_name(
-        &mut self, mode: OutputMode, name: impl AsRef<str>
-    ) {
-        self.update_by_name(Some(mode), None, name)
-    }
-
-    pub fn refresh(&mut self) {
-        // Clean-up dead surfaces
-        self.outputs.iter_mut().for_each(|o| o.surfaces.retain(|s| s.as_ref().is_alive()));
-        self.window_map.borrow().with_windows_from_bottom_to_top(|kind, location, &bbox| {
-            for output in self.outputs.iter_mut() {
-                // Check if the bounding box of the toplevel intersects with
-                // the output, if not no surface in the tree can intersect with
-                // the output.
-                if !output.geometry().overlaps(bbox) {
-                    if let Some(surface) = kind.get_surface() {
-                        with_surface_tree_downward(
-                            surface,
-                            (),
-                            |_, _, _| TraversalAction::DoChildren(()),
-                            |wl_surface, _, _| {
-                                if output.surfaces.contains(wl_surface) {
-                                    output.output.leave(wl_surface);
-                                    output.surfaces.retain(|s| s != wl_surface);
-                                }
-                            },
-                            |_, _, _| true,
-                        )
-                    }
-                    continue;
-                }
-                if let Some(surface) = kind.get_surface() {
-                    with_surface_tree_downward(
-                        surface,
-                        location,
-                        |_, states, location| {
-                            let mut location = *location;
-                            let data = states.data_map.get::<RefCell<SurfaceData>>();
-                            if data.is_some() {
-                                if states.role == Some("subsurface") {
-                                    let current = states.cached_state.current::<SubsurfaceCachedState>();
-                                    location += current.location;
-                                }
-                                TraversalAction::DoChildren(location)
-                            } else {
-                                // If the parent surface is unmapped, then the child surfaces are hidden as
-                                // well, no need to consider them here.
-                                TraversalAction::SkipChildren
-                            }
-                        },
-                        |wl_surface, states, &loc| {
-                            let data = states.data_map.get::<RefCell<SurfaceData>>();
-
-                            if let Some(size) = data.and_then(|d| d.borrow().size()) {
-                                let surface_rectangle = Rectangle { loc, size };
-
-                                if output.geometry().overlaps(surface_rectangle) {
-                                    // We found a matching output, check if we already sent enter
-                                    if !output.surfaces.contains(wl_surface) {
-                                        output.output.enter(wl_surface);
-                                        output.surfaces.push(wl_surface.clone());
-                                    }
-                                } else {
-                                    // Surface does not match output, if we sent enter earlier
-                                    // we should now send leave
-                                    if output.surfaces.contains(wl_surface) {
-                                        output.output.leave(wl_surface);
-                                        output.surfaces.retain(|s| s != wl_surface);
-                                    }
-                                }
-                            } else {
-                                // Maybe the the surface got unmapped, send leave on output
-                                if output.surfaces.contains(wl_surface) {
-                                    output.output.leave(wl_surface);
-                                    output.surfaces.retain(|s| s != wl_surface);
-                                }
-                            }
-                        },
-                        |_, _, _| true,
-                    )
-                }
-            }
-        });
-    }
-}
+//}
 
 #[derive(Debug)]
 struct Window {
