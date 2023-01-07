@@ -8,7 +8,6 @@ pub struct App {
     pub socket_name: Option<String>,
     pub running:     Arc<AtomicBool>,
     pub renderer:    Rc<RefCell<WinitGraphicsBackend>>,
-    pub dnd_icon:    Arc<Mutex<Option<WlSurface>>>,
     pub compositor:  Rc<Compositor>,
     pub controller:  Controller,
     pub workspace:   Rc<RefCell<Workspace>>,
@@ -26,8 +25,6 @@ impl App {
         init_shm_global(&mut *display.borrow_mut(), vec![], log.clone());
         Self::init_loop(&log, &display, event_loop.handle());
         let socket_name = Self::init_socket(&log, &display, true);
-        let dnd_icon = Arc::new(Mutex::new(None));
-        Self::init_data_device(&log, &display, &dnd_icon);
         let running    = Arc::new(AtomicBool::new(true));
         let compositor = Compositor::init(&log, display);
         let workspace  = Rc::new(RefCell::new(Workspace::init(&log, &renderer)?));
@@ -35,7 +32,6 @@ impl App {
             running.clone(), compositor.clone(), workspace.clone());
         Ok(Self {
             log,
-            dnd_icon,
             renderer: renderer.clone(),
             running,
             socket_name,
@@ -105,21 +101,6 @@ impl App {
         } else {
             None
         }
-    }
-    pub fn init_data_device (
-        log: &Logger, display: &Rc<RefCell<Display>>, dnd_icon: &Arc<Mutex<Option<WlSurface>>>
-    ) {
-        let dnd_icon = dnd_icon.clone();
-        init_data_device(
-            &mut display.borrow_mut(),
-            move |event| match event {
-                DataDeviceEvent::DnDStarted { icon, .. } => {*dnd_icon.lock().unwrap() = icon;}
-                DataDeviceEvent::DnDDropped => {*dnd_icon.lock().unwrap() = None;}
-                _ => {}
-            },
-            default_action_chooser,
-            log.clone(),
-        );
     }
     pub fn add_output (&mut self, name: &str) -> &mut Self {
         let size = self.renderer.borrow().window_size().physical_size;
