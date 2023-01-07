@@ -6,7 +6,7 @@ pub(crate) use std::{
     cell::RefCell,
     rc::Rc,
     sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
-    time::Duration,
+    time::{Instant, Duration},
     error::Error,
     process::Command
 };
@@ -20,6 +20,9 @@ pub(crate) use image::{self, ImageBuffer, Rgba};
 pub(crate) use smithay::{
     backend::{
         SwapBuffersError,
+        allocator::{
+            Format
+        },
         input::{
             Axis,
             AxisSource,
@@ -57,7 +60,7 @@ pub(crate) use smithay::{
             self,
             WinitGraphicsBackend,
             WinitInputBackend
-        }
+        },
     },
     reexports::{
         calloop::{
