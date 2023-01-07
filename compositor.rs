@@ -580,7 +580,7 @@ impl Compositor {
     }
 
     pub fn commit (&mut self, surface: &WlSurface) {
-        //self.commit_x11(surface);
+        self.commit_x11(surface);
         if !is_sync_subsurface(surface) {
             self.commit_non_sync_subsurface(surface);
         }
@@ -597,12 +597,13 @@ impl Compositor {
 
     /// Called when a WlSurface commits. Removes it from the unpaired list
     pub fn commit_x11 (&mut self, surface: &WlSurface) {
-        if let Some(client) = surface.as_ref().client()// Is this the Xwayland client?
-        && let Some(Some(x11)) = client.data_map().get::<Option<X11State>>()
-        && let Some((window, location)) = x11.unpaired.borrow_mut().remove(&surface.as_ref().id()) {
-            // Is the surface among the unpaired surfaces
-            // (see comment next to WL_SURFACE_ID handling above)
-            self.x11_new_window(window, surface.clone(), location);
+        if surface.as_ref().client().is_some() {
+            if let Some(state) = &self.x11state {
+                let window = state.unpaired.borrow_mut().remove(&surface.as_ref().id());
+                if let Some((window, location)) = window {
+                    self.x11_new_window(window, surface.clone(), location);
+                }
+            }
         }
     }
 
@@ -688,6 +689,7 @@ impl Compositor {
 
 }
 
+#[derive(Debug)]
 pub struct X11State {
     conn:     Rc<RustConnection>,
     atoms:    Atoms,
