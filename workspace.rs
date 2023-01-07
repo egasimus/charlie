@@ -8,20 +8,8 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub fn init (
-        log:      &Logger,
-        renderer: &Rc<RefCell<WinitGraphicsBackend>>
-    ) -> Result<Self, Box<dyn Error>> {
-        let log = log.clone();
-        let background = &image::io::Reader::open(BACKGROUND)?.with_guessed_format().unwrap()
-            .decode().unwrap().to_rgba8();
-        let background = import_bitmap(renderer.borrow_mut().renderer(), background)?;
-        Ok(Self {
-            log,
-            background,
-            dragging: false,
-            offset: (0.0, 0.0).into(),
-        })
+    pub fn init (log: &Logger, background: Gles2Texture) -> Result<Self, Box<dyn Error>> {
+        Ok(Self { log: log.clone(), background, dragging: false, offset: (0.0, 0.0).into(), })
     }
 
     pub fn draw (

@@ -1,30 +1,35 @@
-use crate::App;
 use crate::prelude::*;
+use crate::App;
+use crate::backend::Backend;
 use crate::controller::{MoveSurfaceGrab, ResizeSurfaceGrab, ResizeState, ResizeData, ResizeEdge};
 use crate::workspace::Workspace;
 
-pub struct Compositor {
+pub struct Compositor<T: Backend> {
     pub log:        Logger,
     pub display:    Rc<RefCell<Display>>,
     pub outputs:    Vec<Output>,
     pub window_map: Rc<RefCell<WindowMap>>,
-    pub xwayland:   XWayland<App>,
+    pub xwayland:   XWayland<App<T>>,
     pub x11state:   Option<X11State>,
 }
 
-impl Compositor {
+impl<T: Backend + 'static> Compositor<T> {
 
     pub fn init (
         log:        &Logger,
         display:    &Rc<RefCell<Display>>,
-        event_loop: &EventLoop<'static, App>,
+        event_loop: &EventLoop<'static, App<T>>,
     ) -> Result<Self, Box<dyn Error>> {
 
         compositor_init(&mut *display.borrow_mut(), move |surface, mut data| {
-            data.get::<App>().unwrap().compositor.borrow_mut().commit(&surface)
+            data.get::<App<T>>().unwrap().compositor.borrow_mut().commit(&surface)
         }, log.clone());
 
-        let (xwayland, channel) = XWayland::new(event_loop.handle(), display.clone(), log.clone());
+        let (xwayland, channel) = XWayland::new(
+            event_loop.handle(),
+            display.clone(),
+            log.clone()
+        );
 
         let compositor = Self {
             log:        log.clone(),
@@ -47,7 +52,7 @@ impl Compositor {
         })?;
 
         xdg_shell_init(&mut *display.borrow_mut(), move |event, mut state| {
-            let compositor = state.get::<App>().unwrap().compositor.borrow_mut();
+            let compositor = state.get::<App<T>>().unwrap().compositor.borrow_mut();
             match event {
                 XdgRequest::NewToplevel { surface }
                     => compositor.xdg_new_toplevel(surface),
@@ -73,7 +78,7 @@ impl Compositor {
 
         let log = compositor.log.clone();
         wl_shell_init(&mut *display.borrow_mut(), move |req: ShellRequest, mut state| {
-            let compositor = state.get::<App>().unwrap().compositor.borrow_mut();
+            let compositor = state.get::<App<T>>().unwrap().compositor.borrow_mut();
             match req {
                 ShellRequest::SetKind { surface, kind: ShellSurfaceKind::Toplevel, }
                     => compositor.set_toplevel(surface),
@@ -571,7 +576,7 @@ impl Compositor {
         &mut self,
         conn:   UnixStream,
         client: Client,
-        handle: &LoopHandle<'static, App>
+        handle: &LoopHandle<'static, App<T>>
     ) -> Result<(), Box<dyn Error>> {
         let screen = 0; // Create an X11 connection. XWayland only uses screen 0.
         let stream = DefaultStream::from_unix_stream(conn)?;

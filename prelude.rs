@@ -3,12 +3,13 @@ pub const OUTPUT_NAME: &str = "winit";
 pub const BACKGROUND: &str = "data/cork2.png";
 
 pub(crate) use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::HashMap, 
     convert::TryFrom, 
     error::Error,
     io::{Error as IOError, ErrorKind, Result as IOResult},
     os::unix::{io::AsRawFd, net::UnixStream},
+    path::Path,
     process::Command,
     rc::Rc,
     sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},

@@ -1,12 +1,12 @@
 use crate::prelude::*;
 use crate::compositor::{Compositor, WindowMap, SurfaceData, SurfaceKind, draw_surface_tree};
 use crate::workspace::Workspace;
-use std::cell::Cell;
+use crate::backend::Backend;
 
-pub struct Controller {
+pub struct Controller<X: Backend> {
     pub log:                   Logger,
     pub running:               Arc<AtomicBool>,
-    pub compositor:            Rc<RefCell<Compositor>>,
+    pub compositor:            Rc<RefCell<Compositor<X>>>,
     pub workspace:             Rc<RefCell<Workspace>>,
     pub seat:                  Seat,
     pub pointer:               PointerHandle,
@@ -19,13 +19,13 @@ pub struct Controller {
     pub suppressed_keys:       Vec<u32>,
 }
 
-impl Controller {
+impl<X: Backend + 'static> Controller<X> {
 
     pub fn init (
         log:        &Logger,
         running:    &Arc<AtomicBool>,
         display:    &Rc<RefCell<Display>>,
-        compositor: &Rc<RefCell<Compositor>>,
+        compositor: &Rc<RefCell<Compositor<X>>>,
         workspace:  &Rc<RefCell<Workspace>>
     ) -> Self {
         let seat_name  = "seat";
@@ -156,7 +156,7 @@ impl Controller {
 
     pub fn process_input_event<B>(&mut self, event: InputEvent<B>)
     where
-        B: InputBackend<SpecialEvent = smithay::backend::winit::WinitEvent>,
+        B: InputBackend//<SpecialEvent = smithay::backend::winit::WinitEvent>,
     {
         use smithay::backend::winit::WinitEvent;
         match event {
@@ -170,13 +170,13 @@ impl Controller {
                 => self.on_pointer_button::<B>(event),
             InputEvent::PointerAxis { event, .. }
                 => self.on_pointer_axis::<B>(event),
-            InputEvent::Special(WinitEvent::Resized { size, .. })
-                => {
-                    self.compositor.borrow_mut().update_mode_by_name(
-                        OutputMode { size, refresh: 60_000, },
-                        OUTPUT_NAME,
-                    );
-                }
+            //InputEvent::Special(WinitEvent::Resized { size, .. })
+                //=> {
+                    //self.compositor.borrow_mut().update_mode_by_name(
+                        //OutputMode { size, refresh: 60_000, },
+                        //OUTPUT_NAME,
+                    //);
+                //}
             _ => {
                 // other events are not handled in anvil (yet)
             }
