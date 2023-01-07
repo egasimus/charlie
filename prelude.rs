@@ -4,11 +4,15 @@ pub const BACKGROUND: &str = "data/cork2.png";
 
 pub(crate) use std::{
     cell::RefCell,
+    collections::HashMap, 
+    convert::TryFrom, 
+    error::Error,
+    io::{Error as IOError, ErrorKind, Result as IOResult},
+    os::unix::{io::AsRawFd, net::UnixStream},
+    process::Command,
     rc::Rc,
     sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
     time::{Instant, Duration},
-    error::Error,
-    process::Command
 };
 
 pub(crate) use slog::{Logger, Drain, o, warn, error, info, debug};
@@ -65,11 +69,17 @@ pub(crate) use smithay::{
     reexports::{
         calloop::{
             EventLoop,
+            EventSource,
             Interest,
-            Mode as CalloopMode,
-            PostAction,
             LoopHandle,
+            Mode as CalloopMode,
+            Poll,
+            PostAction,
+            Readiness,
+            Token,
+            TokenFactory,
             generic::{
+                Fd,
                 Generic
             },
         },
@@ -80,6 +90,7 @@ pub(crate) use smithay::{
             },
         },
         wayland_server::{
+            Client,
             Display,
             Global,
             UserDataMap,
@@ -118,6 +129,7 @@ pub(crate) use smithay::{
             TraversalAction,
             compositor_init,
             get_role,
+            give_role,
             is_sync_subsurface,
             with_states,
             with_surface_tree_downward,
@@ -176,11 +188,44 @@ pub(crate) use smithay::{
         },
         Serial,
     },
-    utils::{Buffer, Logical, Physical, Point, Rectangle, Size},
+    xwayland::{
+        XWayland,
+        XWaylandEvent,
+        XWaylandSource
+    },
+    utils::{
+        Buffer,
+        Logical,
+        Physical,
+        Point,
+        Rectangle,
+        Size
+    },
+};
+
+pub(crate) use x11rb::{
+    self,
+    connection::Connection as _,
+    errors::ReplyOrIdError,
+    protocol::{
+        composite::{ConnectionExt as _, Redirect},
+        xproto::{
+            ChangeWindowAttributesAux,
+            ConfigWindow,
+            ConfigureWindowAux,
+            ConnectionExt as _,
+            EventMask,
+            Window as X11Window,
+            WindowClass,
+        },
+        Event as X11Event,
+    },
+    rust_connection::{DefaultStream, RustConnection},
 };
 
 pub fn import_bitmap<C: std::ops::Deref<Target = [u8]>>(
-    renderer: &mut Gles2Renderer, image: &ImageBuffer<Rgba<u8>, C>,
+    renderer: &mut Gles2Renderer,
+    image:    &ImageBuffer<Rgba<u8>, C>,
 ) -> Result<Gles2Texture, Gles2Error> {
     use smithay::backend::renderer::gles2::ffi;
     renderer.with_context(|renderer, gl| unsafe {

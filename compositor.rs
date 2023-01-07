@@ -7,85 +7,127 @@ pub struct Compositor {
     pub log:        Logger,
     pub window_map: Rc<RefCell<WindowMap>>,
     pub output_map: Rc<RefCell<OutputMap>>,
+    pub xwayland:   XWayland<App>,
+    pub x11state:   Option<X11State>,
 }
 
 impl Compositor {
 
     pub fn init (
-        log:     &Logger,
-        display: &Rc<RefCell<Display>>
-    ) -> Rc<Self> {
-        let window_map = Rc::new(RefCell::new(WindowMap::default()));
+        log:        &Logger,
+        display:    &Rc<RefCell<Display>>,
+        window_map: &Rc<RefCell<WindowMap>>,
+        event_loop: &EventLoop<'static, App>,
+    ) -> Result<Self, Box<dyn Error>> {
+
+        let window_map = window_map.clone();
         let output_map = Rc::new(RefCell::new(OutputMap::new(&log, &display, &window_map)));
+
         compositor_init(
             &mut *display.borrow_mut(),
-            |surface, mut data|data.get::<App>().unwrap()
-                .compositor
-                .window_map.as_ref().borrow_mut()
-                .commit(&surface),
+            |surface, mut data| data.get::<App>().unwrap().compositor.commit(&surface),
             log.clone()
         );
-        let compositor = Rc::new(Self { log: log.clone(), window_map, output_map });
-        compositor.clone().init_xdg_shell(&log, &display);
-        compositor.clone().init_wl_shell(&log, &display);
-        compositor
+
+        let (xwayland, channel) = XWayland::new(event_loop.handle(), display.clone(), log.clone());
+
+        let compositor = Self {
+            log: log.clone(),
+            window_map,
+            output_map,
+            xwayland,
+            x11state: None
+        };
+
+        let handle1 = event_loop.handle();
+        let handle2 = event_loop.handle();
+        let log = compositor.log.clone();
+        handle1.insert_source(channel, move |event, _, state| {
+            debug!(log, "XWaylandEvent: {:?}", event);
+            match event {
+                XWaylandEvent::Ready { connection, client }
+                    => state.compositor.x11_ready(connection, client, &handle2).unwrap(),
+                XWaylandEvent::Exited
+                    => state.compositor.x11_exited().unwrap(),
+            }
+        })?;
+
+        let log = compositor.log.clone();
+        let _ = xdg_shell_init(
+            &mut *display.borrow_mut(),
+            move |event, mut state| {
+                debug!(log, "XDGEvent: {:?}", event);
+                match event {
+                    XdgRequest::NewToplevel { surface }
+                        => state.get::<App>().unwrap().compositor.xdg_new_toplevel(surface),
+                    XdgRequest::NewPopup { surface }
+                        => state.get::<App>().unwrap().compositor.xdg_new_popup(surface),
+                    XdgRequest::Move { surface, seat, serial, }
+                        => state.get::<App>().unwrap().compositor.xdg_move(&surface, seat, serial),
+                    XdgRequest::Resize { surface, seat, serial, edges }
+                        => state.get::<App>().unwrap().compositor.xdg_resize(&surface, seat, serial, edges),
+                    XdgRequest::AckConfigure { surface, configure: Configure::Toplevel(configure), .. }
+                        => state.get::<App>().unwrap().compositor.xdg_ack_configure(&surface, configure),
+                    XdgRequest::Fullscreen { surface, output, .. }
+                        => state.get::<App>().unwrap().compositor.xdg_fullscreen(&surface, output),
+                    XdgRequest::UnFullscreen { surface }
+                        => state.get::<App>().unwrap().compositor.xdg_unfullscreen(&surface),
+                    XdgRequest::Maximize { surface }
+                        => state.get::<App>().unwrap().compositor.xdg_maximize(&surface),
+                    XdgRequest::UnMaximize { surface }
+                        => state.get::<App>().unwrap().compositor.xdg_unmaximize(&surface),
+                    _ => (),
+                }
+            },
+            compositor.log.clone()
+        );
+
+        let log = compositor.log.clone();
+        let _ = wl_shell_init(
+            &mut *display.borrow_mut(),
+            move |req: ShellRequest, mut state| {
+                debug!(log, "WL Event: {:?}", req);
+                match req {
+                    ShellRequest::SetKind { surface, kind: ShellSurfaceKind::Toplevel, }
+                        => state.get::<App>().unwrap().compositor.set_toplevel(surface),
+                    ShellRequest::SetKind { surface, kind: ShellSurfaceKind::Fullscreen { output, .. } }
+                        => state.get::<App>().unwrap().compositor.set_fullscreen(surface, output),
+                    ShellRequest::Move { surface, seat, serial }
+                        => state.get::<App>().unwrap().compositor.shell_move(surface, seat, serial),
+                    ShellRequest::Resize { surface, seat, serial, edges, }
+                        => state.get::<App>().unwrap().compositor.shell_resize(surface, seat, serial, edges),
+                        _ => (),
+                }
+            },
+            compositor.log.clone()
+        );
+
+        Ok(compositor)
+    }
+
+    pub fn add_output (
+        &self, name: impl AsRef<str>, physical: PhysicalProperties, mode: OutputMode
+    ) {
+        self.output_map.borrow_mut().add(name, physical, mode);
     }
 
     pub fn draw (
-        self:      &Rc<Self>,
-        renderer:  &mut Gles2Renderer,
-        frame:     &mut Gles2Frame,
-        workspace: &Workspace
+        &self, renderer: &mut Gles2Renderer, frame: &mut Gles2Frame, workspace: &Workspace
     )
-        -> Result<(Rectangle<i32, Logical>, f32), SwapBuffersError>
+        -> Result<(), SwapBuffersError>
     {
-        if let Some((mut output_geometry, output_scale)) = self.output_map.borrow()
-            .find_by_name(OUTPUT_NAME).map(|output| (output.geometry(), output.scale()))
-        {
-            // Render an infinitely tiling background
-            workspace.draw(frame, output_geometry.size, output_scale)?;
-            // Render the windows
-            let windows = self.window_map.borrow();
+        for output in self.output_map.borrow().outputs.iter() {
+            let mut geometry = output.geometry();
+            let scale = output.scale();
+            workspace.draw(frame, geometry.size, scale)?;
             let offset: Point<i32, Logical> = workspace.offset
-                .to_logical(output_scale as f64)
+                .to_logical(scale as f64)
                 .to_i32_round();
-            output_geometry.loc.x -= offset.x;
-            output_geometry.loc.y -= offset.y;
-            windows.draw_windows(&self.log, renderer, frame, output_geometry, output_scale)?;
-            Ok((output_geometry, output_scale))
-        } else {
-            panic!()
+            geometry.loc.x -= offset.x;
+            geometry.loc.y -= offset.y;
+            self.window_map.borrow().draw_windows(&self.log, renderer, frame, geometry, scale)?;
         }
-    }
-
-    pub fn init_xdg_shell (
-        self: Rc<Self>, log: &Logger, display: &Rc<RefCell<Display>>,
-    ) -> Arc<Mutex<XdgShellState>> {
-        xdg_shell_init(
-            &mut *display.borrow_mut(),
-            move |shell_event, _dispatch_data| match shell_event {
-                XdgRequest::NewToplevel { surface }
-                    => self.xdg_new_toplevel(surface),
-                XdgRequest::NewPopup { surface }
-                    => self.xdg_new_popup(surface),
-                XdgRequest::Move { surface, seat, serial, }
-                    => self.xdg_move(&surface, seat, serial),
-                XdgRequest::Resize { surface, seat, serial, edges }
-                    => self.xdg_resize(&surface, seat, serial, edges),
-                XdgRequest::AckConfigure { surface, configure: Configure::Toplevel(configure), .. }
-                    => self.xdg_ack_configure(&surface, configure),
-                XdgRequest::Fullscreen { surface, output, .. }
-                    => self.xdg_fullscreen(&surface, output),
-                XdgRequest::UnFullscreen { surface }
-                    => self.xdg_unfullscreen(&surface),
-                XdgRequest::Maximize { surface }
-                    => self.xdg_maximize(&surface),
-                XdgRequest::UnMaximize { surface }
-                    => self.xdg_unmaximize(&surface),
-                _ => (),
-            },
-            log.clone()
-        ).0
+        Ok(())
     }
 
     pub fn xdg_new_toplevel (&self, surface: ToplevelSurface) {
@@ -115,97 +157,119 @@ impl Compositor {
         self.window_map.borrow_mut().insert_popup(PopupKind::Xdg(surface));
     }
 
-    pub fn xdg_move (&self, surface: &ToplevelSurface, seat: WlSeat, serial: Serial) {
-        let seat = Seat::from_resource(&seat).unwrap();
-        // TODO: touch move.
-        let pointer = seat.get_pointer().unwrap();
+    pub fn grabbed (&self, surface: &WlSurface, seat: &WlSeat, serial: Serial)
+        -> Option<(PointerHandle, GrabStartData)>
+    {
+        let pointer = Seat::from_resource(&seat).unwrap().get_pointer().unwrap();
         // Check that this surface has a click grab.
-        if !pointer.has_grab(serial) {
-            return;
+        if pointer.has_grab(serial) {
+            let start_data = pointer.grab_start_data().unwrap();
+            let focus      = start_data.focus.clone();
+            // If the focus was for a different surface, ignore the request.
+            if let Some((client, _)) = focus && client.as_ref().same_client_as(surface.as_ref()) {
+                Some((pointer, start_data))
+            } else {
+                None
+            }
+        } else {
+            None
         }
-        let start_data = pointer.grab_start_data().unwrap();
-        // If the focus was for a different surface, ignore the request.
-        if start_data.focus.is_none()
-        || !start_data.focus.as_ref().unwrap().0.as_ref().same_client_as(surface.get_surface().unwrap().as_ref())
-        {
-            return;
-        }
-        let toplevel = SurfaceKind::Xdg(surface.clone());
-        let mut initial_window_location = self.window_map.borrow().location(&toplevel).unwrap();
-        // If surface is maximized then unmaximize it
-        if let Some(current_state) = surface.current_state() {
-            if current_state.states.contains(xdg_toplevel::State::Maximized) {
-                let fs_changed = surface.with_pending_state(|state| {
-                    state.states.unset(xdg_toplevel::State::Maximized);
-                    state.size = None;
-                });
-                if fs_changed.is_ok() {
-                    surface.send_configure();
-                    // NOTE: In real compositor mouse location should be mapped to a new window size
-                    // For example, you could:
-                    // 1) transform mouse pointer position from compositor space to window space (location relative)
-                    // 2) divide the x coordinate by width of the window to get the percentage
-                    //   - 0.0 would be on the far left of the window
-                    //   - 0.5 would be in middle of the window
-                    //   - 1.0 would be on the far right of the window
-                    // 3) multiply the percentage by new window width
-                    // 4) by doing that, drag will look a lot more natural
-                    //
-                    // but for anvil needs setting location to pointer location is fine
-                    let pos = pointer.current_location();
-                    initial_window_location = (pos.x as i32, pos.y as i32).into();
+    }
+
+    pub fn xdg_move (&self, surface: &ToplevelSurface, seat: WlSeat, serial: Serial) {
+        if let Some((pointer, start_data)) = self.grabbed(
+            surface.get_surface().unwrap(), &seat, serial
+        ) {
+            let toplevel = SurfaceKind::Xdg(surface.clone());
+            let mut initial_window_location = self.window_map.borrow().location(&toplevel).unwrap();
+            // If surface is maximized then unmaximize it
+            if let Some(current_state) = surface.current_state() {
+                if current_state.states.contains(xdg_toplevel::State::Maximized) {
+                    let fs_changed = surface.with_pending_state(|state| {
+                        state.states.unset(xdg_toplevel::State::Maximized);
+                        state.size = None;
+                    });
+                    if fs_changed.is_ok() {
+                        surface.send_configure();
+                        let pos = pointer.current_location();
+                        initial_window_location = (pos.x as i32, pos.y as i32).into();
+                    }
                 }
             }
+            pointer.set_grab(MoveSurfaceGrab {
+                start_data,
+                window_map: self.window_map.clone(),
+                toplevel,
+                initial_window_location,
+            }, serial);
         }
-        pointer.set_grab(MoveSurfaceGrab {
-            start_data,
-            window_map: self.window_map.clone(),
-            toplevel,
-            initial_window_location,
-        }, serial);
+    }
+
+    pub fn shell_move (&self, surface: ShellSurface, seat: WlSeat, serial: Serial) {
+        if let Some((pointer, start_data)) = self.grabbed(
+            surface.get_surface().unwrap(), &seat, serial
+        ) {
+            let toplevel = SurfaceKind::Wl(surface);
+            let initial_window_location = self.window_map.borrow().location(&toplevel).unwrap();
+            pointer.set_grab(MoveSurfaceGrab {
+                start_data, window_map: self.window_map.clone(), toplevel, initial_window_location,
+            }, serial);
+        }
     }
 
     pub fn xdg_resize (
         &self, surface: &ToplevelSurface, seat: WlSeat, serial: Serial, edges: XdgResizeEdge
     ) {
-        let seat = Seat::from_resource(&seat).unwrap();
-        // TODO: touch resize.
-        let pointer = seat.get_pointer().unwrap();
-        // Check that this surface has a click grab.
-        if !pointer.has_grab(serial) {
-            return;
-        }
-        let start_data = pointer.grab_start_data().unwrap();
-        // If the focus was for a different surface, ignore the request.
-        if start_data.focus.is_none()
-            || !start_data
-                .focus
-                .as_ref()
-                .unwrap()
-                .0
-                .as_ref()
-                .same_client_as(surface.get_surface().unwrap().as_ref())
-        {
-            return;
-        }
-        let toplevel = SurfaceKind::Xdg(surface.clone());
-        let initial_window_location = self.window_map.borrow().location(&toplevel).unwrap();
-        let geometry = self.window_map.borrow().geometry(&toplevel).unwrap();
-        let initial_window_size = geometry.size;
-        with_states(surface.get_surface().unwrap(), move |states| {
-            states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut().resize_state =
-                ResizeState::Resizing(ResizeData {
-                    edges: edges.into(), initial_window_location, initial_window_size,
-                });
-        }).unwrap();
+        if let Some((pointer, start_data)) = self.grabbed(
+            surface.get_surface().unwrap(), &seat, serial
+        ) {
+            let toplevel = SurfaceKind::Xdg(surface.clone());
+            let initial_window_location = self.window_map.borrow().location(&toplevel).unwrap();
+            let geometry = self.window_map.borrow().geometry(&toplevel).unwrap();
+            let initial_window_size = geometry.size;
+            with_states(surface.get_surface().unwrap(), move |states| {
+                states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut().resize_state =
+                    ResizeState::Resizing(ResizeData {
+                        edges: edges.into(), initial_window_location, initial_window_size,
+                    });
+            }).unwrap();
 
-        pointer.set_grab(ResizeSurfaceGrab {
-            start_data,
-            toplevel,
-            edges: edges.into(),
-            initial_window_size,
-            last_window_size: initial_window_size,
-        }, serial);
+            pointer.set_grab(ResizeSurfaceGrab {
+                start_data,
+                toplevel,
+                edges: edges.into(),
+                initial_window_size,
+                last_window_size: initial_window_size,
+            }, serial);
+        }
+    }
+    
+    pub fn shell_resize (
+        &self, surface: ShellSurface, seat: WlSeat, serial: Serial, edges: Resize,
+    ) {
+        if let Some((pointer, start_data)) = self.grabbed(
+            surface.get_surface().unwrap(), &seat, serial
+        ) {
+            let toplevel = SurfaceKind::Wl(surface.clone());
+            let initial_window_location = self.window_map.borrow().location(&toplevel).unwrap();
+            let geometry = self.window_map.borrow().geometry(&toplevel).unwrap();
+            let initial_window_size = geometry.size;
+            with_states(surface.get_surface().unwrap(), move |states| {
+                states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut().resize_state =
+                    ResizeState::Resizing(ResizeData {
+                        edges: edges.into(),
+                        initial_window_location,
+                        initial_window_size,
+                    }); }).unwrap();
+            let grab = ResizeSurfaceGrab {
+                start_data,
+                toplevel,
+                edges: edges.into(),
+                initial_window_size,
+                last_window_size: initial_window_size,
+            };
+            pointer.set_grab(grab, serial);
+        }
     }
 
     pub fn xdg_ack_configure (&self, surface: &WlSurface, configure: ToplevelConfigure) {
@@ -326,27 +390,6 @@ impl Compositor {
         }
     }
 
-    pub fn init_wl_shell (
-        self: Rc<Self>, log: &Logger, display: &Rc<RefCell<Display>>,
-    ) -> Arc<Mutex<WlShellState>> {
-        wl_shell_init(
-            &mut *display.borrow_mut(),
-            move |req: ShellRequest, _dispatch_data| {
-                match req {
-                    ShellRequest::SetKind { surface, kind: ShellSurfaceKind::Toplevel, }
-                        => self.set_toplevel(surface),
-                    ShellRequest::SetKind { surface, kind: ShellSurfaceKind::Fullscreen { output, .. } }
-                        => self.set_fullscreen(surface, output),
-                    ShellRequest::Move { surface, seat, serial }
-                        => self.shell_move(surface, seat, serial),
-                    ShellRequest::Resize { surface, seat, serial, edges, }
-                        => self.shell_resize(surface, seat, serial, edges),
-                        _ => (),
-                }
-            }, log.clone()
-        ).0
-    }
-
     /// place the window at a random location on the primary output
     /// or if there is not output in a [0;800]x[0;800] square
     pub fn set_toplevel (&self, surface: ShellSurface) {
@@ -380,59 +423,6 @@ impl Compositor {
         };
     }
 
-    pub fn shell_move (&self, surface: ShellSurface, seat: WlSeat, serial: Serial) {
-        let seat = Seat::from_resource(&seat).unwrap();
-        let pointer = seat.get_pointer().unwrap();
-        // Check that this surface has a click grab.
-        if !pointer.has_grab(serial) { return; }
-        let start_data = pointer.grab_start_data();
-        // If the focus was for a different surface, ignore the request.
-        if let Some(start_data) = start_data && start_data.focus.as_ref().unwrap().0.as_ref()
-            .same_client_as(surface.get_surface().unwrap().as_ref())
-        {
-            let toplevel = SurfaceKind::Wl(surface);
-            let initial_window_location = self.window_map.borrow().location(&toplevel).unwrap();
-            pointer.set_grab(MoveSurfaceGrab {
-                start_data, window_map: self.window_map.clone(), toplevel, initial_window_location,
-            }, serial);
-        }
-    }
-    
-    pub fn shell_resize (
-        &self, surface: ShellSurface, seat: WlSeat, serial: Serial, edges: Resize,
-    ) {
-        let seat = Seat::from_resource(&seat).unwrap();
-        // TODO: touch resize.
-        let pointer = seat.get_pointer().unwrap();
-        // Check that this surface has a click grab.
-        if !pointer.has_grab(serial) { return; }
-        let start_data = pointer.grab_start_data();
-        // If the focus was for a different surface, ignore the request.
-        if let Some(start_data) = start_data && start_data.focus.as_ref().unwrap().0.as_ref()
-            .same_client_as(surface.get_surface().unwrap().as_ref())
-        {
-            let toplevel = SurfaceKind::Wl(surface.clone());
-            let initial_window_location = self.window_map.borrow().location(&toplevel).unwrap();
-            let geometry = self.window_map.borrow().geometry(&toplevel).unwrap();
-            let initial_window_size = geometry.size;
-            with_states(surface.get_surface().unwrap(), move |states| {
-                states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut().resize_state =
-                    ResizeState::Resizing(ResizeData {
-                        edges: edges.into(),
-                        initial_window_location,
-                        initial_window_size,
-                    }); }).unwrap();
-            let grab = ResizeSurfaceGrab {
-                start_data,
-                toplevel,
-                edges: edges.into(),
-                initial_window_size,
-                last_window_size: initial_window_size,
-            };
-            pointer.set_grab(grab, serial);
-        }
-    }
-
     fn fullscreen_output_geometry(
         &self,
         wl_surface: &wl_surface::WlSurface,
@@ -459,18 +449,285 @@ impl Compositor {
         self.output_map.borrow().with_primary().map(|o| o.geometry())
     }
 
+    pub fn x11_start (&self) {
+        if let Err(e) = self.xwayland.start() {
+            error!(self.log, "Failed to start XWayland: {}", e);
+        }
+    }
+
+    pub fn x11_exited (&mut self) -> Result<(), Box<dyn Error>> {
+        error!(self.log, "Xwayland crashed");
+        Ok(())
+    }
+
+    pub fn x11_ready (
+        &mut self,
+        conn:   UnixStream,
+        client: Client,
+        handle: &LoopHandle<'static, App>
+    ) -> Result<(), Box<dyn Error>> {
+        let screen = 0; // Create an X11 connection. XWayland only uses screen 0.
+        let stream = DefaultStream::from_unix_stream(conn)?;
+        let conn   = RustConnection::connect_to_stream(stream, screen)?;
+        let atoms  = Atoms::new(&conn)?.reply()?;
+        let screen = &conn.setup().roots[0];
+        conn.change_window_attributes( // Actually become the WM by redirecting some operations
+            screen.root,
+            &ChangeWindowAttributesAux::default().event_mask(EventMask::SUBSTRUCTURE_REDIRECT),
+        )?;
+        let win = conn.generate_id()?; // Tell XWayland that we are the WM
+                                       // by acquiring the WM_S0 selection.
+                                       // No X11 clients are accepted before this.
+        conn.create_window(
+            screen.root_depth, win, screen.root,
+            0, 0, 1, 1, 0, // x, y, width, height, border width
+            WindowClass::INPUT_OUTPUT,
+            x11rb::COPY_FROM_PARENT,
+            &Default::default(),
+        )?;
+        conn.set_selection_owner(win, atoms.WM_S0, x11rb::CURRENT_TIME)?;
+        // XWayland wants us to do this to function properly...?
+        conn.composite_redirect_subwindows(screen.root, Redirect::MANUAL)?;
+        conn.flush()?;
+        let conn = Rc::new(conn);
+        self.x11state = Some(X11State {
+            conn:     Rc::clone(&conn),
+            atoms:    atoms,
+            unpaired: Default::default()
+        });
+        handle.insert_source(X11Source::new(conn), move |events, _, state| {
+            for event in events.into_iter() {
+                state.compositor.x11_handle(event, &client)?;
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
+    
+    fn x11_handle (&self, event: X11Event, client: &Client) -> Result<(), ReplyOrIdError> {
+        if self.x11state.is_none() {
+            warn!(self.log, "X11: Got event while not ready: {:?}", event);
+            return Ok(())
+        }
+        debug!(self.log, "X11: Got event {:?}", event);
+        let X11State { conn, atoms, unpaired } = self.x11state.as_ref().unwrap();
+        match event {
+            X11Event::ConfigureRequest(r) => {
+                // Just grant the wish
+                let mut aux = ConfigureWindowAux::default();
+                if r.value_mask & u16::from(ConfigWindow::STACK_MODE) != 0 {
+                    aux = aux.stack_mode(r.stack_mode);
+                }
+                if r.value_mask & u16::from(ConfigWindow::SIBLING) != 0 {
+                    aux = aux.sibling(r.sibling);
+                }
+                if r.value_mask & u16::from(ConfigWindow::X) != 0 {
+                    aux = aux.x(i32::try_from(r.x).unwrap());
+                }
+                if r.value_mask & u16::from(ConfigWindow::Y) != 0 {
+                    aux = aux.y(i32::try_from(r.y).unwrap());
+                }
+                if r.value_mask & u16::from(ConfigWindow::WIDTH) != 0 {
+                    aux = aux.width(u32::try_from(r.width).unwrap());
+                }
+                if r.value_mask & u16::from(ConfigWindow::HEIGHT) != 0 {
+                    aux = aux.height(u32::try_from(r.height).unwrap());
+                }
+                if r.value_mask & u16::from(ConfigWindow::BORDER_WIDTH) != 0 {
+                    aux = aux.border_width(u32::try_from(r.border_width).unwrap());
+                }
+                conn.configure_window(r.window, &aux)?;
+            }
+            X11Event::MapRequest(r) => {
+                // Just grant the wish
+                conn.map_window(r.window)?;
+            }
+            X11Event::ClientMessage(msg) => {
+                if msg.type_ == atoms.WL_SURFACE_ID {
+                    // We get a WL_SURFACE_ID message when Xwayland creates a WlSurface for a
+                    // window. Both the creation of the surface and this client message happen at
+                    // roughly the same time and are sent over different sockets (X11 socket and
+                    // wayland socket). Thus, we could receive these two in any order. Hence, it
+                    // can happen that we get None below when X11 was faster than Wayland.
+                    let location = match conn.get_geometry(msg.window)?.reply() {
+                        Ok(geo) => (geo.x as i32, geo.y as i32).into(),
+                        Err(err) => {
+                            error!(
+                                self.log,
+                                "Failed to get geometry for {:x}, perhaps the window was already destroyed?",
+                                msg.window;
+                                "err" => format!("{:?}", err),
+                            );
+                            (0, 0).into()
+                        }
+                    };
+
+                    let id = msg.data.as_data32()[0];
+                    let surface = client.get_resource::<WlSurface>(id);
+                    info!(
+                        self.log,
+                        "X11 surface {:x?} corresponds to WlSurface {:x} = {:?}", msg.window, id, surface,
+                    );
+                    match surface {
+                        None => {
+                            unpaired.borrow_mut().insert(id, (msg.window, location));
+                        },
+                        Some(surface) => {
+                            self.x11_new_window(msg.window, surface, location)
+                        },
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn x11_new_window (
+        &self,
+        window:   X11Window,
+        surface:  WlSurface,
+        location: Point<i32, Logical>
+    ) {
+        debug!(self.log, "Matched X11 surface {:x?} to {:x?}", window, surface);
+        if give_role(&surface, "x11_surface").is_err() {
+            // It makes no sense to post a protocol error here since that would only kill Xwayland
+            error!(self.log, "Surface {:x?} already has a role?!", surface);
+            return;
+        }
+        self.window_map.borrow_mut().insert(SurfaceKind::X11(X11Surface { surface }), location);
+    }
+
+    pub fn commit (&mut self, surface: &WlSurface) {
+        self.commit_x11(surface);
+        if !is_sync_subsurface(surface) {
+            self.commit_non_sync_subsurface(surface);
+        }
+        let mut window_map = self.window_map.borrow_mut();
+        if let Some(toplevel) = window_map.find(surface) {
+            self.commit_initial_configure(surface, &toplevel);
+            window_map.refresh_toplevel(&toplevel);
+            self.commit_toplevel_resize(&mut *window_map, surface, &toplevel);
+        }
+        if let Some(popup) = window_map.find_popup(surface) {
+            self.commit_popup(surface, &popup);
+        }
+    }
+
+    /// Called when a WlSurface commits. Removes it from the unpaired list
+    pub fn commit_x11 (&mut self, surface: &WlSurface) {
+        if let Some(client) = surface.as_ref().client()// Is this the Xwayland client?
+        && let Some(Some(x11)) = client.data_map().get::<Option<X11State>>()
+        && let Some((window, location)) = x11.unpaired.borrow_mut().remove(&surface.as_ref().id()) {
+            // Is the surface among the unpaired surfaces
+            // (see comment next to WL_SURFACE_ID handling above)
+            self.x11_new_window(window, surface.clone(), location);
+        }
+    }
+
+    /// Update the buffer of all child surfaces
+    fn commit_non_sync_subsurface (&self, surface: &WlSurface) {
+        with_surface_tree_upward(
+            surface,
+            (),
+            |_, _, _| TraversalAction::DoChildren(()),
+            |_, states, _| {
+                states.data_map.insert_if_missing(|| RefCell::new(SurfaceData::default()));
+                let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap()
+                    .borrow_mut();
+                data.update_buffer(&mut *states.cached_state.current::<SurfaceAttributes>());
+            },
+            |_, _, _| true,
+        );
+    }
+
+    /// send the initial configure if relevant
+    fn commit_initial_configure (&self, surface: &WlSurface, toplevel: &SurfaceKind) {
+        if let SurfaceKind::Xdg(ref toplevel) = toplevel {
+            if !with_states(surface, |states| {
+                states.data_map.get::<Mutex<XdgToplevelSurfaceRoleAttributes>>().unwrap()
+                    .lock().unwrap().initial_configure_sent
+            }).unwrap() {
+                toplevel.send_configure();
+            }
+        }
+    }
+
+    fn commit_toplevel_resize (&self, window_map: &mut WindowMap, surface: &WlSurface, toplevel: &SurfaceKind) {
+        if let Some(location) = with_states(surface, |states| {
+            let geometry = window_map.geometry(&toplevel).unwrap();
+            let mut data = states.data_map.get::<RefCell<SurfaceData>>().unwrap().borrow_mut();
+            let mut new_location = None;
+            // If the window is being resized by top or left, its location must be adjusted
+            // accordingly.
+            match data.resize_state {
+                ResizeState::Resizing(resize_data) |
+                ResizeState::WaitingForFinalAck(resize_data, _) |
+                ResizeState::WaitingForCommit(resize_data) => {
+                    let ResizeData { edges, initial_window_location, initial_window_size } =
+                        resize_data;
+                    if edges.intersects(ResizeEdge::TOP_LEFT) {
+                        let mut location = window_map.location(&toplevel).unwrap();
+                        if edges.intersects(ResizeEdge::LEFT) {
+                            location.x = initial_window_location.x +
+                                (initial_window_size.w - geometry.size.w);
+                        }
+                        if edges.intersects(ResizeEdge::TOP) {
+                            location.y = initial_window_location.y +
+                                (initial_window_size.h - geometry.size.h);
+                        }
+                        new_location = Some(location);
+                    }
+                }
+                ResizeState::NotResizing => (),
+            }
+            // Finish resizing.
+            if let ResizeState::WaitingForCommit(_) = data.resize_state {
+                data.resize_state = ResizeState::NotResizing;
+            }
+            new_location
+        }).unwrap() {
+            self.window_map.borrow_mut().set_location(&toplevel, location);
+        }
+    }
+
+    fn commit_popup (&self, surface: &WlSurface, popup: &PopupKind) {
+        let PopupKind::Xdg(ref popup) = popup;
+        if !with_states(surface, |states| {
+            states.data_map.get::<Mutex<XdgPopupSurfaceRoleAttributes>>().unwrap()
+                .lock().unwrap()
+                .initial_configure_sent
+        }).unwrap() {
+            // TODO: properly recompute the geometry with the whole of positioner state
+            popup.send_configure();
+        }
+    }
+
+}
+
+pub struct X11State {
+    conn:     Rc<RustConnection>,
+    atoms:    Atoms,
+    unpaired: Rc<RefCell<HashMap<u32, (X11Window, Point<i32, Logical>)>>>
+}
+
+x11rb::atom_manager! {
+    Atoms: AtomsCookie {
+        WM_S0,
+        WL_SURFACE_ID,
+    }
 }
 
 pub struct Output {
-    name: String,
-    output: output::Output,
-    global: Option<Global<wl_output::WlOutput>>,
-    surfaces: Vec<WlSurface>,
+    name:         String,
+    output:       output::Output,
+    global:       Option<Global<wl_output::WlOutput>>,
+    surfaces:     Vec<WlSurface>,
     current_mode: OutputMode,
-    scale: f32,
+    scale:        f32,
     output_scale: i32,
-    location: Point<i32, Logical>,
-    userdata: UserDataMap,
+    location:     Point<i32, Logical>,
+    userdata:     UserDataMap,
 }
 
 impl Output {
@@ -533,10 +790,10 @@ impl Drop for Output {
 }
 
 pub struct OutputMap {
-    log:        Logger,
-    display:    Rc<RefCell<Display>>,
-    outputs:    Vec<Output>,
-    window_map: Rc<RefCell<WindowMap>>,
+    log:         Logger,
+    display:     Rc<RefCell<Display>>,
+    pub outputs: Vec<Output>,
+    window_map:  Rc<RefCell<WindowMap>>,
 }
 
 impl OutputMap {
@@ -803,7 +1060,6 @@ impl OutputMap {
                     }
                     continue;
                 }
-
                 if let Some(surface) = kind.get_surface() {
                     with_surface_tree_downward(
                         surface,
@@ -811,13 +1067,11 @@ impl OutputMap {
                         |_, states, location| {
                             let mut location = *location;
                             let data = states.data_map.get::<RefCell<SurfaceData>>();
-
                             if data.is_some() {
                                 if states.role == Some("subsurface") {
                                     let current = states.cached_state.current::<SubsurfaceCachedState>();
                                     location += current.location;
                                 }
-
                                 TraversalAction::DoChildren(location)
                             } else {
                                 // If the parent surface is unmapped, then the child surfaces are hidden as
@@ -861,6 +1115,7 @@ impl OutputMap {
     }
 }
 
+#[derive(Debug)]
 struct Window {
     pub location: Point<i32, Logical>,
     /// A bounding box over this window and its children.
@@ -887,22 +1142,15 @@ impl Window {
                 |wl_surface, states, location| {
                     let mut location = *location;
                     let data = states.data_map.get::<RefCell<SurfaceData>>();
-
                     if states.role == Some("subsurface") {
                         let current = states.cached_state.current::<SubsurfaceCachedState>();
                         location += current.location;
                     }
-
-                    let contains_the_point = data
-                        .map(|data| {
-                            data.borrow()
-                                .contains_point(&*states.cached_state.current(), point - location.to_f64())
-                        })
-                        .unwrap_or(false);
-                    if contains_the_point {
+                    if data.map(|data| data.borrow().contains_point(
+                        &*states.cached_state.current(), point - location.to_f64())
+                    ).unwrap_or(false) {
                         *found.borrow_mut() = Some((wl_surface.clone(), location));
                     }
-
                     TraversalAction::DoChildren(location)
                 },
                 |_, _, _| {},
@@ -924,16 +1172,13 @@ impl Window {
                 |_, states, &loc| {
                     let mut loc = loc;
                     let data = states.data_map.get::<RefCell<SurfaceData>>();
-
                     if let Some(size) = data.and_then(|d| d.borrow().size()) {
                         if states.role == Some("subsurface") {
                             let current = states.cached_state.current::<SubsurfaceCachedState>();
                             loc += current.location;
                         }
-
                         // Update the bounding box.
                         bounding_box = bounding_box.merge(Rectangle::from_loc_and_size(loc, size));
-
                         TraversalAction::DoChildren(loc)
                     } else {
                         // If the parent surface is unmapped, then the child surfaces are hidden as
@@ -977,13 +1222,18 @@ impl Window {
     }
 }
 
-#[derive(Default)]
 pub struct WindowMap {
+    log:     Logger,
     windows: Vec<Window>,
-    popups: Vec<Popup>,
+    popups:  Vec<Popup>,
 }
 
 impl WindowMap {
+
+    pub fn init (log: &Logger) -> Self {
+        Self { log: log.clone(), windows: vec![], popups: vec![] }
+    }
+
     pub fn insert(&mut self, toplevel: SurfaceKind, location: Point<i32, Logical>) {
         let mut window = Window {location, bbox: Rectangle::default(), toplevel};
         window.self_update();
@@ -1120,10 +1370,10 @@ impl WindowMap {
 
     pub fn draw_windows<R, E, F, T>(
         &self,
-        log: &Logger,
-        renderer: &mut R,
-        frame: &mut F,
-        output_rect: Rectangle<i32, Logical>,
+        log:          &Logger,
+        renderer:     &mut R,
+        frame:        &mut F,
+        output_rect:  Rectangle<i32, Logical>,
         output_scale: f32,
     ) -> Result<(), SwapBuffersError>
     where
@@ -1133,7 +1383,6 @@ impl WindowMap {
         T: Texture + 'static,
     {
         let mut result = Ok(());
-
         // redraw the frame, in a simple but inneficient way
         self.with_windows_from_bottom_to_top(|toplevel_surface, mut initial_place, &bounding_box| {
             // skip windows that do not overlap with a given output
@@ -1167,185 +1416,40 @@ impl WindowMap {
                 });
             }
         });
-
         result
     }
 
-    pub fn commit (&mut self, surface: &wl_surface::WlSurface) {
-        #[cfg(feature = "xwayland")]
-        super::xwayland::commit_hook(surface);
-        if !is_sync_subsurface(surface) {
-            // Update the buffer of all child surfaces
-            with_surface_tree_upward(
-                surface,
-                (),
-                |_, _, _| TraversalAction::DoChildren(()),
-                |_, states, _| {
-                    states
-                        .data_map
-                        .insert_if_missing(|| RefCell::new(SurfaceData::default()));
-                    let mut data = states
-                        .data_map
-                        .get::<RefCell<SurfaceData>>()
-                        .unwrap()
-                        .borrow_mut();
-                    data.update_buffer(&mut *states.cached_state.current::<SurfaceAttributes>());
-                },
-                |_, _, _| true,
-            );
-        }
-        if let Some(toplevel) = self.find(surface) {
-            // send the initial configure if relevant
-            if let SurfaceKind::Xdg(ref toplevel) = toplevel {
-                let initial_configure_sent = with_states(surface, |states| {
-                    states
-                        .data_map
-                        .get::<Mutex<XdgToplevelSurfaceRoleAttributes>>()
-                        .unwrap()
-                        .lock()
-                        .unwrap()
-                        .initial_configure_sent
-                })
-                .unwrap();
-                if !initial_configure_sent {
-                    toplevel.send_configure();
-                }
-            }
-
-            self.refresh_toplevel(&toplevel);
-
-            let geometry = self.geometry(&toplevel).unwrap();
-            let new_location = with_states(surface, |states| {
-                let mut data = states
-                    .data_map
-                    .get::<RefCell<SurfaceData>>()
-                    .unwrap()
-                    .borrow_mut();
-
-                let mut new_location = None;
-
-                // If the window is being resized by top or left, its location must be adjusted
-                // accordingly.
-                match data.resize_state {
-                    ResizeState::Resizing(resize_data)
-                    | ResizeState::WaitingForFinalAck(resize_data, _)
-                    | ResizeState::WaitingForCommit(resize_data) => {
-                        let ResizeData {
-                            edges,
-                            initial_window_location,
-                            initial_window_size,
-                        } = resize_data;
-
-                        if edges.intersects(ResizeEdge::TOP_LEFT) {
-                            let mut location = self.location(&toplevel).unwrap();
-
-                            if edges.intersects(ResizeEdge::LEFT) {
-                                location.x =
-                                    initial_window_location.x + (initial_window_size.w - geometry.size.w);
-                            }
-                            if edges.intersects(ResizeEdge::TOP) {
-                                location.y =
-                                    initial_window_location.y + (initial_window_size.h - geometry.size.h);
-                            }
-
-                            new_location = Some(location);
-                        }
-                    }
-                    ResizeState::NotResizing => (),
-                }
-
-                // Finish resizing.
-                if let ResizeState::WaitingForCommit(_) = data.resize_state {
-                    data.resize_state = ResizeState::NotResizing;
-                }
-
-                new_location
-            })
-            .unwrap();
-
-            if let Some(location) = new_location {
-                self.set_location(&toplevel, location);
-            }
-        }
-
-        if let Some(popup) = self.find_popup(surface) {
-            let PopupKind::Xdg(ref popup) = popup;
-            let initial_configure_sent = with_states(surface, |states| {
-                states
-                    .data_map
-                    .get::<Mutex<XdgPopupSurfaceRoleAttributes>>()
-                    .unwrap()
-                    .lock()
-                    .unwrap()
-                    .initial_configure_sent
-            })
-            .unwrap();
-            if !initial_configure_sent {
-                // TODO: properly recompute the geometry with the whole of positioner state
-                popup.send_configure();
-            }
-        }
-    }
 }
 
-pub struct Popup {
-    pub popup: PopupKind,
-}
+pub struct Popup { pub popup: PopupKind, }
 
 #[derive(Clone)]
-pub enum PopupKind {
-    Xdg(PopupSurface),
-}
+pub enum PopupKind { Xdg(PopupSurface), }
 
 impl PopupKind {
     pub fn alive(&self) -> bool {
-        match *self {
-            PopupKind::Xdg(ref t) => t.alive(),
-        }
+        match *self { PopupKind::Xdg(ref t) => t.alive(), }
     }
-
     pub fn get_surface(&self) -> Option<&wl_surface::WlSurface> {
-        match *self {
-            PopupKind::Xdg(ref t) => t.get_surface(),
-        }
+        match *self { PopupKind::Xdg(ref t) => t.get_surface(), }
     }
-
     pub fn parent(&self) -> Option<wl_surface::WlSurface> {
-        let wl_surface = match self.get_surface() {
+        with_states(match self.get_surface() {
             Some(s) => s,
             None => return None,
-        };
-        with_states(wl_surface, |states| {
-            states
-                .data_map
-                .get::<Mutex<XdgPopupSurfaceRoleAttributes>>()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .parent
-                .clone()
-        })
-        .ok()
-        .flatten()
+        }, |states| states.data_map.get::<Mutex<XdgPopupSurfaceRoleAttributes>>().unwrap()
+            .lock().unwrap()
+            .parent.clone()
+        ).ok().flatten()
     }
-
     pub fn location(&self) -> Point<i32, Logical> {
-        let wl_surface = match self.get_surface() {
+        with_states(match self.get_surface() {
             Some(s) => s,
             None => return (0, 0).into(),
-        };
-        with_states(wl_surface, |states| {
-            states
-                .data_map
-                .get::<Mutex<XdgPopupSurfaceRoleAttributes>>()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .current
-                .geometry
-        })
-        .unwrap_or_default()
-        .loc
+        }, |states| states.data_map.get::<Mutex<XdgPopupSurfaceRoleAttributes>>().unwrap()
+            .lock().unwrap()
+            .current.geometry
+        ).unwrap_or_default().loc
     }
 }
 
@@ -1427,11 +1531,10 @@ impl SurfaceData {
 
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SurfaceKind {
     Xdg(ToplevelSurface),
     Wl(ShellSurface),
-    #[cfg(feature = "xwayland")]
     X11(X11Surface),
 }
 
@@ -1440,20 +1543,16 @@ impl SurfaceKind {
         match *self {
             SurfaceKind::Xdg(ref t) => t.alive(),
             SurfaceKind::Wl(ref t) => t.alive(),
-            #[cfg(feature = "xwayland")]
             SurfaceKind::X11(ref t) => t.alive(),
         }
     }
-
     pub fn get_surface(&self) -> Option<&wl_surface::WlSurface> {
         match *self {
             SurfaceKind::Xdg(ref t) => t.get_surface(),
             SurfaceKind::Wl(ref t) => t.get_surface(),
-            #[cfg(feature = "xwayland")]
-            Kind::X11(ref t) => t.get_surface(),
+            SurfaceKind::X11(ref t) => t.get_surface(),
         }
     }
-
     /// Activate/Deactivate this window
     pub fn set_activated(&self, active: bool) {
         if let SurfaceKind::Xdg(ref t) = self {
@@ -1471,12 +1570,98 @@ impl SurfaceKind {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct X11Surface {
+    surface: WlSurface,
+}
+
+impl std::cmp::PartialEq for X11Surface {
+    fn eq(&self, other: &Self) -> bool {
+        self.alive() && other.alive() && self.surface == other.surface
+    }
+}
+
+impl X11Surface {
+    pub fn alive(&self) -> bool {
+        self.surface.as_ref().is_alive()
+    }
+
+    pub fn get_surface(&self) -> Option<&WlSurface> {
+        if self.alive() {
+            Some(&self.surface)
+        } else {
+            None
+        }
+    }
+}
+
+pub struct X11Source {
+    connection: Rc<RustConnection>,
+    generic: Generic<Fd>,
+}
+
+impl X11Source {
+    pub fn new(connection: Rc<RustConnection>) -> Self {
+        let fd = Fd(connection.stream().as_raw_fd());
+        let generic = Generic::new(fd, Interest::READ, CalloopMode::Level);
+        Self { connection, generic }
+    }
+}
+
+impl EventSource for X11Source {
+    type Event = Vec<X11Event>;
+    type Metadata = ();
+    type Ret = Result<(), ReplyOrIdError>;
+
+    fn process_events<C>(
+        &mut self,
+        readiness: Readiness,
+        token: Token,
+        mut callback: C,
+    ) -> IOResult<PostAction>
+    where
+        C: FnMut(Self::Event, &mut Self::Metadata) -> Self::Ret,
+    {
+        fn inner<C>(conn: &RustConnection, mut callback: C) -> Result<(), ReplyOrIdError>
+        where
+            C: FnMut(Vec<X11Event>, &mut ()) -> Result<(), ReplyOrIdError>,
+        {
+            let mut events = Vec::new();
+            while let Some(event) = conn.poll_for_event()? {
+                events.push(event);
+            }
+            if !events.is_empty() {
+                callback(events, &mut ())?;
+            }
+            conn.flush()?;
+            Ok(())
+        }
+        let connection = &self.connection;
+        self.generic.process_events(readiness, token, |_, _| {
+            inner(connection, &mut callback).map_err(|err| IOError::new(ErrorKind::Other, err))?;
+            Ok(PostAction::Continue)
+        })
+    }
+
+    fn register(&mut self, poll: &mut Poll, factory: &mut TokenFactory) -> IOResult<()> {
+        self.generic.register(poll, factory)
+    }
+
+    fn reregister(&mut self, poll: &mut Poll, factory: &mut TokenFactory) -> IOResult<()> {
+        self.generic.reregister(poll, factory)
+    }
+
+    fn unregister(&mut self, poll: &mut Poll) -> IOResult<()> {
+        self.generic.unregister(poll)
+    }
+}
+
 pub fn draw_surface_tree<R, E, F, T>(
-    log: &Logger,
-    renderer: &mut R,
-    frame: &mut F,
-    root: &wl_surface::WlSurface,
-    location: Point<i32, Logical>,
+    log:          &Logger,
+    renderer:     &mut R,
+    frame:        &mut F,
+    root:         &WlSurface,
+    location:     Point<i32, Logical>,
     output_scale: f32,
 ) -> Result<(), SwapBuffersError>
 where
@@ -1486,100 +1671,86 @@ where
     T: Texture + 'static,
 {
     let mut result = Ok(());
-
-    with_surface_tree_upward(
-        root,
-        location,
-        |_surface, states, location| {
-            let mut location = *location;
-            // Pull a new buffer if available
-            if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>() {
-                let mut data = data.borrow_mut();
-                let attributes = states.cached_state.current::<SurfaceAttributes>();
-                if data.texture.is_none() {
-                    if let Some(buffer) = data.buffer.take() {
-                        let damage = attributes
-                            .damage
-                            .iter()
-                            .map(|dmg| match dmg {
-                                Damage::Buffer(rect) => *rect,
-                                // TODO also apply transformations
-                                Damage::Surface(rect) => rect.to_buffer(attributes.buffer_scale),
-                            })
-                            .collect::<Vec<_>>();
-
-                        match renderer.import_buffer(&buffer, Some(states), &damage) {
-                            Some(Ok(m)) => {
-                                let texture_buffer = if let Some(BufferType::Shm) = buffer_type(&buffer) {
-                                    buffer.release();
-                                    None
-                                } else {
-                                    Some(buffer)
-                                };
-                                data.texture = Some(Box::new(BufferTextures {
-                                    buffer: texture_buffer,
-                                    texture: m,
-                                }))
-                            }
-                            Some(Err(err)) => {
-                                warn!(log, "Error loading buffer: {:?}", err);
+    with_surface_tree_upward(root, location, |_surface, states, location| {
+        let mut location = *location;
+        // Pull a new buffer if available
+        if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>() {
+            let mut data = data.borrow_mut();
+            let attributes = states.cached_state.current::<SurfaceAttributes>();
+            if data.texture.is_none() {
+                if let Some(buffer) = data.buffer.take() {
+                    let damage = attributes.damage.iter().map(|dmg| match dmg {
+                        Damage::Buffer(rect) => *rect,
+                        // TODO also apply transformations
+                        Damage::Surface(rect) => rect.to_buffer(attributes.buffer_scale),
+                    }).collect::<Vec<_>>();
+                    match renderer.import_buffer(&buffer, Some(states), &damage) {
+                        Some(Ok(m)) => {
+                            let buffer = if let Some(BufferType::Shm) = buffer_type(&buffer) {
                                 buffer.release();
-                            }
-                            None => {
-                                error!(log, "Unknown buffer format for: {:?}", buffer);
-                                buffer.release();
-                            }
+                                None
+                            } else {
+                                Some(buffer)
+                            };
+                            data.texture = Some(Box::new(BufferTextures { buffer, texture: m }))
+                        }
+                        Some(Err(err)) => {
+                            warn!(log, "Error loading buffer: {:?}", err);
+                            buffer.release();
+                        }
+                        None => {
+                            error!(log, "Unknown buffer format for: {:?}", buffer);
+                            buffer.release();
                         }
                     }
                 }
-                // Now, should we be drawn ?
-                if data.texture.is_some() {
-                    // if yes, also process the children
-                    if states.role == Some("subsurface") {
-                        let current = states.cached_state.current::<SubsurfaceCachedState>();
-                        location += current.location;
-                    }
-                    TraversalAction::DoChildren(location)
-                } else {
-                    // we are not displayed, so our children are neither
-                    TraversalAction::SkipChildren
+            }
+            // Now, should we be drawn ?
+            if data.texture.is_some() {
+                // if yes, also process the children
+                if states.role == Some("subsurface") {
+                    let current = states.cached_state.current::<SubsurfaceCachedState>();
+                    location += current.location;
                 }
+                TraversalAction::DoChildren(location)
             } else {
                 // we are not displayed, so our children are neither
                 TraversalAction::SkipChildren
             }
-        },
-        |_surface, states, location| {
-            let mut location = *location;
-            if let Some(ref data) = states.data_map.get::<RefCell<SurfaceData>>() {
-                let mut data = data.borrow_mut();
-                let buffer_scale = data.buffer_scale;
-                if let Some(texture) = data
-                    .texture
-                    .as_mut()
-                    .and_then(|x| x.downcast_mut::<BufferTextures<T>>())
-                {
-                    // we need to re-extract the subsurface offset, as the previous closure
-                    // only passes it to our children
-                    if states.role == Some("subsurface") {
-                        let current = states.cached_state.current::<SubsurfaceCachedState>();
-                        location += current.location;
-                    }
-                    if let Err(err) = frame.render_texture_at(
-                        &texture.texture,
-                        location.to_f64().to_physical(output_scale as f64).to_i32_round(),
-                        buffer_scale,
-                        output_scale as f64,
-                        Transform::Normal, /* TODO */
-                        1.0,
-                    ) {
-                        result = Err(err.into());
-                    }
+        } else {
+            // we are not displayed, so our children are neither
+            TraversalAction::SkipChildren
+        }
+    },
+    |_surface, states, location| {
+        let mut location = *location;
+        if let Some(ref data) = states.data_map.get::<RefCell<SurfaceData>>() {
+            let mut data = data.borrow_mut();
+            let buffer_scale = data.buffer_scale;
+            if let Some(texture) = data
+                .texture
+                .as_mut()
+                .and_then(|x| x.downcast_mut::<BufferTextures<T>>())
+            {
+                // we need to re-extract the subsurface offset, as the previous closure
+                // only passes it to our children
+                if states.role == Some("subsurface") {
+                    let current = states.cached_state.current::<SubsurfaceCachedState>();
+                    location += current.location;
+                }
+                if let Err(err) = frame.render_texture_at(
+                    &texture.texture,
+                    location.to_f64().to_physical(output_scale as f64).to_i32_round(),
+                    buffer_scale,
+                    output_scale as f64,
+                    Transform::Normal, /* TODO */
+                    1.0,
+                ) {
+                    result = Err(err.into());
                 }
             }
-        },
-        |_, _, _| true,
-    );
+        }
+    }, |_, _, _| true);
 
     result
 }

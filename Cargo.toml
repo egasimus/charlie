@@ -24,6 +24,7 @@ thiserror = "1"
 xcursor = "0.3.3"
 xkbcommon = "0.4.0"
 deno_core = "0.165.0"
+x11rb = { version = "0.8", default-features = false, features = [ "composite" ] }
 
 [dependencies.smithay]
 version = "0.3.0"
@@ -38,14 +39,9 @@ features = [
   "backend_libinput",
   "backend_session",
   "wayland_frontend",
-  "slog-stdlog"
+  "slog-stdlog",
+  "xwayland"
 ]
-
-[dependencies.x11rb]
-optional = true
-version = "0.8"
-default-features = false
-features = [ "composite" ]
 
 [build-dependencies]
 gl_generator = "0.14"

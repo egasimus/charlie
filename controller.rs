@@ -1,12 +1,15 @@
 use crate::prelude::*;
-use crate::compositor::{Compositor, WindowMap, SurfaceData, SurfaceKind, draw_surface_tree};
+use crate::compositor::{
+    Compositor, OutputMap, WindowMap, SurfaceData, SurfaceKind, draw_surface_tree
+};
 use crate::workspace::Workspace;
 use std::cell::Cell;
 
 pub struct Controller {
     pub log:                   Logger,
     pub running:               Arc<AtomicBool>,
-    pub compositor:            Rc<Compositor>,
+    pub window_map:            Rc<RefCell<WindowMap>>,
+    pub output_map:            Rc<RefCell<OutputMap>>,
     pub workspace:             Rc<RefCell<Workspace>>,
     pub seat:                  Seat,
     pub pointer:               PointerHandle,
@@ -23,12 +26,12 @@ impl Controller {
 
     pub fn init (
         log:        &Logger,
+        running:    &Arc<AtomicBool>,
         display:    &Rc<RefCell<Display>>,
-        running:    Arc<AtomicBool>,
-        compositor: Rc<Compositor>,
-        workspace:  Rc<RefCell<Workspace>>
+        compositor: &Compositor,
+        workspace:  &Rc<RefCell<Workspace>>
     ) -> Self {
-        let seat_name = "seat";
+        let seat_name  = "seat";
         let (mut seat, _) = Seat::new(&mut display.borrow_mut(), seat_name.to_string(), log.clone());
         let cursor_status = Arc::new(Mutex::new(CursorImageStatus::Default));
         let cursor_status2 = cursor_status.clone();
@@ -47,9 +50,10 @@ impl Controller {
         Self::init_data_device(&log, &display, &dnd_icon);
         Self {
             log:                   log.clone(),
-            running,
-            compositor,
-            workspace,
+            running:               running.clone(),
+            window_map:            compositor.window_map.clone(),
+            output_map:            compositor.output_map.clone(),
+            workspace:             workspace.clone(),
             seat,
             keyboard,
             suppressed_keys:       vec![],
@@ -172,7 +176,7 @@ impl Controller {
                 => self.on_pointer_axis::<B>(event),
             InputEvent::Special(WinitEvent::Resized { size, .. })
                 => {
-                    self.compositor.output_map.borrow_mut().update_mode_by_name(
+                    self.output_map.borrow_mut().update_mode_by_name(
                         OutputMode { size, refresh: 60_000, },
                         OUTPUT_NAME,
                     );
@@ -189,7 +193,7 @@ impl Controller {
     }
 
     fn on_pointer_move_absolute<B: InputBackend>(&mut self, evt: B::PointerMotionAbsoluteEvent) {
-        let output_size = self.compositor.output_map.borrow().find_by_name(OUTPUT_NAME)
+        let output_size = self.output_map.borrow().find_by_name(OUTPUT_NAME)
             .map(|o| o.size()).unwrap();
         self.last_pointer_location = self.pointer_location;
         self.pointer_location = evt.position_transformed(output_size);
@@ -197,7 +201,7 @@ impl Controller {
             .on_pointer_move_absolute(self.pointer_location, self.last_pointer_location);
         let pos    = self.pointer_location - self.workspace.borrow().offset.to_logical(1.0);
         let serial = SCOUNTER.next_serial();
-        let under  = self.compositor.window_map.borrow().get_surface_under(pos);
+        let under  = self.window_map.borrow().get_surface_under(pos);
         self.pointer.motion(pos, under, serial, evt.time());
     }
 
@@ -214,9 +218,9 @@ impl Controller {
                 // change the keyboard focus unless the pointer is grabbed
                 if !self.pointer.is_grabbed() {
                     let pos   = self.pointer_location - self.workspace.borrow().offset.to_logical(1.0);
-                    let under = self.compositor.window_map.borrow().get_surface_under(pos);
-                    if under.is_some () {
-                        let under = self.compositor.window_map.borrow_mut()
+                    let under = self.window_map.borrow().get_surface_under(pos);
+                    if under.is_some() {
+                        let under = self.window_map.borrow_mut()
                             .get_surface_and_bring_to_top(pos);
                         self.keyboard
                             .set_focus(under.as_ref().map(|&(ref s, _)| s), serial);
@@ -340,18 +344,18 @@ impl Controller {
             }
             KeyAction::ScaleUp => {
                 let current_scale = {
-                    self.compositor.output_map.borrow().find_by_name(OUTPUT_NAME)
+                    self.output_map.borrow().find_by_name(OUTPUT_NAME)
                         .map(|o| o.scale()).unwrap_or(1.0)
                 };
-                self.compositor.output_map.borrow_mut()
+                self.output_map.borrow_mut()
                     .update_scale_by_name(current_scale + 0.05f32, OUTPUT_NAME);
             }
             KeyAction::ScaleDown => {
                 let current_scale = {
-                    self.compositor.output_map.borrow().find_by_name(OUTPUT_NAME)
+                    self.output_map.borrow().find_by_name(OUTPUT_NAME)
                         .map(|o| o.scale()).unwrap_or(1.0)
                 };
-                self.compositor.output_map.borrow_mut().update_scale_by_name(
+                self.output_map.borrow_mut().update_scale_by_name(
                     f32::max(0.05f32, current_scale - 0.05f32),
                     OUTPUT_NAME,
                 );
@@ -537,7 +541,6 @@ impl PointerGrab for ResizeSurfaceGrab {
                 }
             }
             SurfaceKind::Wl(wl) => wl.send_configure(self.last_window_size, self.edges.into()),
-            #[cfg(feature = "xwayland")]
             SurfaceKind::X11(_) => {
                 // TODO: What to do here? Send the update via X11?
             }

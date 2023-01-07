@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::compositor::{Compositor, draw_surface_tree};
+use crate::compositor::{Compositor, WindowMap};
 use crate::controller::Controller;
 use crate::workspace::Workspace;
 
@@ -12,7 +12,8 @@ pub struct App {
     pub display:     Rc<RefCell<Display>>,
     pub renderer:    Rc<RefCell<WinitGraphicsBackend>>,
     pub input:       Rc<RefCell<WinitInputBackend>>,
-    pub compositor:  Rc<Compositor>,
+    pub windows:     Rc<RefCell<WindowMap>>,
+    pub compositor:  Compositor,
     pub controller:  Controller,
     pub workspace:   Rc<RefCell<Workspace>>,
 }
@@ -21,24 +22,25 @@ impl App {
 
     pub fn init (log: Logger) -> Result<Self, Box<dyn Error>> {
         let display    = Rc::new(RefCell::new(Display::new()));
-        let event_loop = Rc::new(RefCell::new(EventLoop::try_new()?));
+        let event_loop = EventLoop::try_new()?;
         let (renderer, input) = App::init_io(&log)?;
         init_xdg_output_manager(&mut *display.borrow_mut(), log.clone());
         init_shm_global(&mut *display.borrow_mut(), vec![], log.clone());
         let running    = Arc::new(AtomicBool::new(true));
-        let compositor = Compositor::init(&log, &display);
+        let windows    = Rc::new(RefCell::new(WindowMap::init(&log)));
+        let compositor = Compositor::init(&log, &display, &windows, &event_loop)?;
         let workspace  = Rc::new(RefCell::new(Workspace::init(&log, &renderer)?));
-        let controller = Controller::init(&log, &display,
-            running.clone(), compositor.clone(), workspace.clone());
+        let controller = Controller::init(&log, &running, &display, &compositor, &workspace);
         let app = Self {
             log,
             running,
             start_time: Instant::now(),
-            event_loop,
+            event_loop: Rc::new(RefCell::new(event_loop)),
             socket_name: None,
             display,
             renderer,
             input,
+            windows,
             compositor,
             controller,
             workspace,
@@ -108,8 +110,7 @@ impl App {
         self
     }
     pub fn add_output (&mut self, name: &str) -> &mut Self {
-        let size = self.renderer.borrow().window_size().physical_size;
-        self.compositor.output_map.borrow_mut().add(
+        self.compositor.add_output(
             name,
             PhysicalProperties {
                 size: (0, 0).into(),
@@ -117,7 +118,10 @@ impl App {
                 make: "Smithay".into(),
                 model: "Winit".into(),
             },
-            OutputMode { size, refresh: 60_000 }
+            OutputMode {
+                size:    self.renderer.borrow().window_size().physical_size,
+                refresh: 60_000
+            }
         );
         self
     }
@@ -126,23 +130,16 @@ impl App {
         self
     }
     pub fn start (&mut self) {
+        //self.compositor.x11_start();
         self.start_time = Instant::now();
         info!(self.log, "Initialization completed, starting the main loop.");
         while self.running() {
-            if !self.dispatch_input() {
-                self.stop();
-                break;
-            } else {
-                self.draw();
-                self.flush();
-            }
-            if !self.dispatch_event_loop() {
-                self.stop();
-                break;
-            } else {
-                self.flush();
-                self.refresh();
-            }
+            if !self.dispatch_input() { self.stop(); break; }
+            self.draw();
+            self.flush();
+            if !self.dispatch_event_loop() { self.stop(); break; }
+            self.flush();
+            self.refresh();
         }
         self.clear();
     }
@@ -162,8 +159,8 @@ impl App {
             self.renderer.borrow_mut().render(|mut renderer, mut frame| {
                 // This is safe to do as with winit we are guaranteed to have exactly one output
                 frame.clear([0.8, 0.8, 0.8, 1.0])?;
-                let (_, output_scale) = self.compositor.draw(&mut renderer, &mut frame, &workspace)?;
-                self.controller.draw(&mut renderer, &mut frame, output_scale)?;
+                self.compositor.draw(&mut renderer, &mut frame, &workspace)?;
+                self.controller.draw(&mut renderer, &mut frame, 1.0)?;
                 Ok(())
             }).map_err(Into::<SwapBuffersError>::into).and_then(|x| x)
         };
