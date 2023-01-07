@@ -23,6 +23,7 @@ slog-term = "2.8"
 thiserror = "1"
 xcursor = "0.3.3"
 xkbcommon = "0.4.0"
+deno_core = "0.165.0"
 
 [dependencies.smithay]
 version = "0.3.0"

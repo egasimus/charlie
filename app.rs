@@ -121,7 +121,7 @@ impl App {
             log.clone(),
         );
     }
-    pub fn add_output (&self, name: &str) -> &Self {
+    pub fn add_output (&mut self, name: &str) -> &mut Self {
         let size = self.renderer.borrow().window_size().physical_size;
         self.compositor.output_map.borrow_mut().add(
             name,
@@ -135,7 +135,11 @@ impl App {
         );
         self
     }
-    pub fn run (
+    pub fn run (&mut self, command: &mut Command) -> &mut Self {
+        command.spawn().unwrap();
+        self
+    }
+    pub fn start (
         &mut self,
         display: &Rc<RefCell<Display>>,
         mut input: WinitInputBackend,

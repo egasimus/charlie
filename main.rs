@@ -14,12 +14,11 @@ fn main () -> Result<(), Box<dyn Error>> {
     let display = Rc::new(RefCell::new(Display::new()));
     let (renderer, input) = App::init_io(&log, &display)?;
     let event_loop = EventLoop::try_new().unwrap();
-    let mut charlie = App::init(log, &display, &renderer, &event_loop)?;
-    charlie.add_output(OUTPUT_NAME);
-    std::process::Command::new("kitty").spawn()?;
-    std::process::Command::new("chromium").arg("--ozone-platform=wayland").spawn()?;
-    //std::process::Command::new("glxgears").spawn()?;
-    Ok(charlie.run(&display, input, event_loop))
+    Ok(App::init(log, &display, &renderer, &event_loop)?
+        .add_output(OUTPUT_NAME)
+        .run(&mut Command::new("kitty"))
+        .run(Command::new("chromium").arg("--ozone-platform=wayland"))
+        .start(&display, input, event_loop))
 }
 
 fn init_log () -> (slog::Logger, GlobalLoggerGuard) {

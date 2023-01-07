@@ -8,6 +8,7 @@ pub(crate) use std::{
     sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
     time::Duration,
     error::Error,
+    process::Command
 };
 
 pub(crate) use slog::{Logger, Drain, o, warn, error, info, debug};
