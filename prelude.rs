@@ -4,7 +4,7 @@ pub const BACKGROUND: &str = "data/cork2.png";
 
 pub(crate) use std::{
     cell::{Cell, RefCell},
-    collections::{HashMap, Entry},
+    collections::{HashMap, hash_map::Entry},
     convert::TryFrom, 
     error::Error,
     io::{Error as IOError, ErrorKind, Result as IOResult},
@@ -27,9 +27,6 @@ pub(crate) use rand::distributions::{Distribution, Uniform};
 pub(crate) use smithay::{
     backend::{
         SwapBuffersError,
-        allocator::{
-            Format
-        },
         input::{
             Axis,
             AxisSource,

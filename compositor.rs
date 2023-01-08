@@ -1,47 +1,44 @@
 use crate::prelude::*;
 use crate::App;
-use crate::backend::Backend;
+use crate::backend::Engine;
 use crate::controller::{MoveSurfaceGrab, ResizeSurfaceGrab, ResizeState, ResizeData, ResizeEdge};
 use crate::workspace::Workspace;
 
-pub struct Compositor<T: Backend> {
+pub struct Compositor<T: Engine> {
     pub log:        Logger,
     pub display:    Rc<RefCell<Display>>,
     pub outputs:    Vec<Output>,
     pub window_map: Rc<RefCell<WindowMap>>,
-    pub xwayland:   XWayland<App<T>>,
     pub x11state:   Option<X11State>,
 }
 
-impl<T: Backend + 'static> Compositor<T> {
+impl Compositor {
 
-    pub fn init (
-        log:        &Logger,
-        display:    &Rc<RefCell<Display>>,
-        event_loop: &EventLoop<'static, App<T>>,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn init (backend: &T) -> Result<Self, Box<dyn Error>> {
 
+        let log     = backend.logger();
+        let display = backend.display().clone();
         compositor_init(&mut *display.borrow_mut(), move |surface, mut data| {
             data.get::<App<T>>().unwrap().compositor.borrow_mut().commit(&surface)
         }, log.clone());
 
         let (xwayland, channel) = XWayland::new(
-            event_loop.handle(),
+            backend.event_handle(),
             display.clone(),
             log.clone()
         );
 
         let compositor = Self {
             log:        log.clone(),
-            display:    Rc::clone(display),
+            display:    display.clone(),
             outputs:    vec![],
             window_map: Rc::new(RefCell::new(WindowMap::init(&log))),
             x11state:   None,
             xwayland,
         };
 
-        let handle1 = event_loop.handle();
-        let handle2 = event_loop.handle();
+        let handle1 = backend.event_handle();
+        let handle2 = backend.event_handle();
         handle1.insert_source(channel, move |event, _, state| {
             match event {
                 XWaylandEvent::Ready { connection, client }
@@ -74,9 +71,8 @@ impl<T: Backend + 'static> Compositor<T> {
                     => compositor.xdg_unmaximize(&surface),
                 _ => (),
             };
-        }, compositor.log.clone());
+        }, backend.logger());
 
-        let log = compositor.log.clone();
         wl_shell_init(&mut *display.borrow_mut(), move |req: ShellRequest, mut state| {
             let compositor = state.get::<App<T>>().unwrap().compositor.borrow_mut();
             match req {
@@ -90,7 +86,7 @@ impl<T: Backend + 'static> Compositor<T> {
                     => compositor.shell_resize(surface, seat, serial, edges),
                     _ => (),
             }
-        }, compositor.log.clone());
+        }, backend.logger());
 
         Ok(compositor)
     }

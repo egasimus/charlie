@@ -3,11 +3,11 @@ use prelude::*;
 pub static FPS_NUMBERS_PNG: &[u8] = include_bytes!("../resources/numbers.png");
 
 pub fn draw_fps<R, E, F, T>(
-    _renderer: &mut R,
-    frame: &mut F,
-    texture: &T,
+    _renderer:    &mut R,
+    frame:        &mut F,
+    texture:      &T,
     output_scale: f64,
-    value: u32,
+    value:        u32,
 ) -> Result<(), SwapBuffersError>
 where
     R: Renderer<Error = E, TextureId = T, Frame = F> + ImportAll,
@@ -43,37 +43,4 @@ where
     }
 
     Ok(())
-}
-
-pub fn import_bitmap<C: std::ops::Deref<Target = [u8]>>(
-    renderer: &mut Gles2Renderer,
-    image: &ImageBuffer<Rgba<u8>, C>,
-) -> Result<Gles2Texture, Gles2Error> {
-    use smithay::backend::renderer::gles2::ffi;
-
-    renderer.with_context(|renderer, gl| unsafe {
-        let mut tex = 0;
-        gl.GenTextures(1, &mut tex);
-        gl.BindTexture(ffi::TEXTURE_2D, tex);
-        gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_WRAP_S, ffi::CLAMP_TO_EDGE as i32);
-        gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_WRAP_T, ffi::CLAMP_TO_EDGE as i32);
-        gl.TexImage2D(
-            ffi::TEXTURE_2D,
-            0,
-            ffi::RGBA as i32,
-            image.width() as i32,
-            image.height() as i32,
-            0,
-            ffi::RGBA,
-            ffi::UNSIGNED_BYTE as u32,
-            image.as_ptr() as *const _,
-        );
-        gl.BindTexture(ffi::TEXTURE_2D, 0);
-
-        Gles2Texture::from_raw(
-            renderer,
-            tex,
-            (image.width() as i32, image.height() as i32).into(),
-        )
-    })
 }
