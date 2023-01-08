@@ -27,7 +27,7 @@ pub(crate) trait Engine: Stoppable + Sized {
         Ok(self)
     }
 
-    fn output_add (&mut self) -> Result<(), Box<dyn Error>> {
+    fn output_add (&mut self, name: &str) -> Result<(), Box<dyn Error>> {
         unimplemented!();
     }
 

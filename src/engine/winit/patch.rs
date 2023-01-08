@@ -25,7 +25,7 @@ use wayland_egl as wegl;
 
 /// Contains the main event loop, spawns one or more windows, and dispatches events to them.
 pub struct WinitEngineBackend {
-    logger:  Logger,
+    pub logger: Logger,
     events:  EventLoop<()>,
     started: Option<Instant>,
     display: EGLDisplay,
@@ -219,7 +219,7 @@ impl WinitEngineWindow {
         let mut frame = self.renderer.render(size, Transform::Normal)?;
         let rect: Rectangle<i32, Physical> = Rectangle::from_loc_and_size((0, 0), size);
         frame.clear([1.0,1.0,1.0,1.0], &[rect])?;
-        //self.renderer.unbind()?;
+        frame.finish()?;
         Ok(())
     }
 

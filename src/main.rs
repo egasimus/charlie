@@ -16,8 +16,8 @@ use crate::prelude::*;
 fn main () -> Result<(), Box<dyn Error>> {
     let (logger, _guard) = init_log();
     let mut engine = engine::winit::WinitEngine::new(&logger)?;
-    engine.output_add()?;
-    engine.output_add()?;
+    engine.output_add("Alice")?;
+    engine.output_add("Bob")?;
     engine.start(&mut State::new(&logger));
     Ok(())
 }
