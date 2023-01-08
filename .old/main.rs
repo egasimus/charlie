@@ -1,4 +1,4 @@
-#![feature(int_roundings)]
+#![feature(int_roundings, let_else)]
 
 mod prelude;
 //mod backend;
@@ -17,8 +17,10 @@ fn main () -> Result<(), Box<dyn Error>> {
     let _guard = slog_scope::set_global_logger(logger.clone());
     slog_stdlog::init().expect("Could not setup log backend");
     info!(&logger, "logger initialized");
-    let engine = Winit::new(logger.clone())?.init()?;
-    App::init(logger.clone(), engine, State::default())?.start()
+    let mut engine = Winit::new(logger.clone())?.init()?;
+    engine.add_screen()?;
+    engine.add_screen()?;
+    App::init(logger.clone(), engine, State::new(logger.clone()))?.start()
 }
 
 struct App<E: Engine> {
@@ -38,8 +40,8 @@ impl<E: Engine> App<E> {
                 self.engine.stop();
                 break
             }
-            self.state.render(&mut self.engine);
-            self.engine.tick(&self.state)
+            self.state.render(&mut self.engine)?;
+            self.engine.tick(&mut self.state)
         }
         Ok(())
     }
@@ -64,7 +66,7 @@ trait Engine: Sized {
     fn render_pointer (&mut self, screen: &Screen, pointer: &Point<f64, Logical>) -> Result<(), Box<dyn Error>> {
         unimplemented!{};
     }
-    fn tick (&self, state: &State) {
+    fn tick (&mut self, state: &mut State) {
         unimplemented!{};
     }
 }
@@ -98,14 +100,17 @@ impl WinitScreen {
         })
     }
     /// FIXME Describe what this does
-    fn init_display_dispatch (&self, events: &EventLoop<'static, State>) -> Result<(), Box<dyn Error>> {
-        let fd      = self.display.borrow().get_poll_fd();
+    fn init_display_dispatch (self, events: &EventLoop<'static, State>)
+        -> Result<Self, Box<dyn Error>>
+    {
+        let fd = self.display.borrow().get_poll_fd();
+        debug!(self.logger, "Winit screen poll fd: {fd}");
         let source  = Generic::from_fd(fd, Interest::READ, CalloopMode::Level);
         let display = self.display.clone();
         let running = self.running.clone();
         let logger  = self.logger.clone();
         events.handle().insert_source(source, move |_, _, state: &mut State| {
-            let duration = std::time::Duration::from_millis(0);
+            let duration = Duration::from_millis(0);
             if let Err(e) = display.borrow_mut().dispatch(duration, state) {
                 error!(logger, "I/O error on the Wayland display: {}", e);
                 running.store(false, Ordering::SeqCst);
@@ -114,12 +119,12 @@ impl WinitScreen {
                 Ok(PostAction::Continue)
             }
         })?;
-        Ok(())
+        Ok(self)
     }
-    fn init_dmabuf (&mut self) -> Result<(), Box<dyn Error>> {
-        let display = self.display.clone();
-        self.graphics.borrow_mut().renderer().bind_wl_display(&display.clone().borrow())?;
+    fn init_dmabuf (self) -> Result<Self, Box<dyn Error>> {
+        self.graphics.borrow_mut().renderer().bind_wl_display(&self.display.clone().borrow())?;
         let graphics = self.graphics.clone();
+        let display  = self.display.clone();
         init_dmabuf_global(
             &mut *display.borrow_mut(),
             self.graphics.clone().borrow_mut().renderer()
@@ -127,7 +132,7 @@ impl WinitScreen {
             move |buffer, _| graphics.borrow_mut().renderer().import_dmabuf(buffer).is_ok(),
             self.logger.clone()
         );
-        Ok(())
+        Ok(self)
     }
 }
 
@@ -144,10 +149,9 @@ impl Winit {
 
 impl Engine for Winit {
     fn add_screen (&mut self) -> Result<(), Box<dyn Error>> {
-        let screen = WinitScreen::init(&self.logger, &self.running)
-            .map_err(Into::<Box<dyn Error>>::into)?;
-        self.screens.push(screen);
-        Ok(())
+        Ok(self.screens.push(WinitScreen::init(&self.logger, &self.running)?
+            .init_display_dispatch(&self.events)?
+            .init_dmabuf()?))
     }
     fn running (&self) -> &Arc<AtomicBool> {
         &self.running
@@ -160,8 +164,21 @@ impl Engine for Winit {
         }
         Ok(())
     }
-    fn tick (&self, state: &State) {
-        unimplemented!();
+    fn tick (&mut self, state: &mut State) {
+        if self.screens.len() > 0 {
+            for screen in self.screens.iter() {
+                screen.display.borrow_mut().flush_clients(state);
+                let t = Some(Duration::from_millis(16));
+                if self.events.dispatch(t, state).is_err() {
+                    self.stop()
+                } else {
+                    screen.display.borrow_mut().flush_clients(state);
+                }
+            }
+        } else {
+            error!(self.logger, "no screens");
+            self.stop();
+        }
     }
 }
 
@@ -195,7 +212,7 @@ impl Engine for Udev {
             .dispatch(Some(Duration::from_millis(16)), state)
             .map_err(Into::<Box<dyn Error>>::into)
     }
-    fn tick (&self, state: &State) {
+    fn tick (&mut self, state: &mut State) {
         unimplemented!();
     }
 }
@@ -219,8 +236,8 @@ struct Window {
     size:     Size<f64, Logical>
 }
 
-#[derive(Default)]
 struct State {
+    logger:       Logger,
     screens:      Vec<Screen>,
     windows:      Vec<Window>,
     pointer:      Point<f64, Logical>,
@@ -229,20 +246,32 @@ struct State {
 
 impl State {
 
-    fn render (&self, engine: &mut impl Engine) {
-        for screen in self.screens.iter() {
-            for window in self.windows.iter() {
-                if screen.contains_rect(window) {
-                    engine.render_window(screen, window);
-                }
-            }
-            if screen.contains_point(self.pointer) {
-                engine.render_pointer(screen, &self.pointer);
-            }
+    fn new (logger: Logger) -> Self {
+        Self {
+            logger,
+            screens: vec![],
+            windows: vec![],
+            pointer: (0.0, 0.0).into(),
+            pointer_last: (0.0, 0.0).into(),
         }
     }
 
+    fn render (&self, engine: &mut impl Engine) -> Result<(), Box<dyn Error>> {
+        for screen in self.screens.iter() {
+            for window in self.windows.iter() {
+                if screen.contains_rect(window) {
+                    engine.render_window(screen, window)?;
+                }
+            }
+            if screen.contains_point(self.pointer) {
+                engine.render_pointer(screen, &self.pointer)?;
+            }
+        }
+        Ok(())
+    }
+
     fn on_input <B: InputBackend> (&mut self, event: InputEvent<B>) {
+        debug!(self.logger, "Received input event")
     }
 
 }
