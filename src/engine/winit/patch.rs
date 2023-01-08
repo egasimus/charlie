@@ -126,11 +126,11 @@ impl WinitEngineBackend {
         let mut renderer = unsafe { Gles2Renderer::new(context, self.logger.clone())? };
         renderer.bind_wl_display(&display.handle())?;
         info!(self.logger, "EGL hardware-acceleration enabled");
-        let dmabuf_formats = renderer.dmabuf_formats().cloned().collect::<Vec<_>>();
-        let mut dmabuf_state = DmabufState::new();
-        let dmabuf_global = dmabuf_state.create_global::<WinitEngineWindow, _>(
-            &display.handle(), dmabuf_formats, self.logger.clone(),
-        );
+        //let dmabuf_formats = renderer.dmabuf_formats().cloned().collect::<Vec<_>>();
+        //let mut dmabuf_state = DmabufState::new();
+        //let dmabuf_global = dmabuf_state.create_global::<WinitEngineWindow, _>(
+            //&display.handle(), dmabuf_formats, self.logger.clone(),
+        //);
 
         self.windows.insert(window_id, WinitEngineWindow {
             logger: self.logger.clone(),
@@ -142,8 +142,8 @@ impl WinitEngineBackend {
             renderer,
             surface: Rc::new(surface),
             resized: Rc::new(Cell::new(None)),
-            dmabuf_state,
-            dmabuf_global,
+            //dmabuf_state,
+            //dmabuf_global,
             size: {
                 let (w, h): (u32, u32) = window.inner_size().into();
                 Rc::new(RefCell::new(WindowSize {
@@ -225,8 +225,8 @@ pub struct WinitEngineWindow {
     resized:       Rc<Cell<Option<Size<i32, Physical>>>>,
     size:          Rc<RefCell<WindowSize>>,
     is_x11:        bool,
-    dmabuf_state:  DmabufState,
-    dmabuf_global: DmabufGlobal
+    //dmabuf_state:  DmabufState,
+    //dmabuf_global: DmabufGlobal
 }
 
 impl WinitEngineWindow {
@@ -243,7 +243,7 @@ impl WinitEngineWindow {
         let size = self.surface.get_size().unwrap();
         let mut frame = self.renderer.render(size, Transform::Normal)?;
         let rect: Rectangle<i32, Physical> = Rectangle::from_loc_and_size((0, 0), size);
-        frame.clear([1.0,1.0,1.0,1.0], &[rect])?;
+        frame.clear([0.2,0.3,0.4,1.0], &[rect])?;
         frame.finish()?;
         self.surface.swap_buffers(None)?;
         Ok(())
@@ -374,21 +374,21 @@ impl WinitEngineWindow {
 
 }
 
-impl BufferHandler for WinitEngineWindow {
-    fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
-}
+//impl BufferHandler for WinitEngineWindow {
+    //fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
+//}
 
-impl DmabufHandler for WinitEngineWindow {
-    fn dmabuf_state(&mut self) -> &mut DmabufState {
-        &mut self.dmabuf_state
-    }
+//impl DmabufHandler for WinitEngineWindow {
+    //fn dmabuf_state(&mut self) -> &mut DmabufState {
+        //&mut self.dmabuf_state
+    //}
 
-    fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf) -> Result<(), ImportError> {
-        self.renderer
-            .import_dmabuf(&dmabuf, None)
-            .map(|_| ())
-            .map_err(|_| ImportError::Failed)
-    }
-}
+    //fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf) -> Result<(), ImportError> {
+        //self.renderer
+            //.import_dmabuf(&dmabuf, None)
+            //.map(|_| ())
+            //.map_err(|_| ImportError::Failed)
+    //}
+//}
 
-delegate_dmabuf!(WinitEngineWindow);
+//delegate_dmabuf!(WinitEngineWindow);
