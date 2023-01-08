@@ -28,7 +28,7 @@ pub(crate) fn init_log () -> (Logger, slog_scope::GlobalLoggerGuard) {
     };
     let _guard = slog_scope::set_global_logger(log.clone());
     slog_stdlog::init().expect("Could not setup log backend");
-    debug!(&log, "logger initialized");
+    debug!(&log, "Logger initialized");
     (log, _guard)
 }
 

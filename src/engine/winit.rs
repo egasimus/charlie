@@ -1,13 +1,13 @@
 mod patch;
 
 use crate::prelude::*;
-
-use smithay::backend::renderer::gles2::Gles2Renderer;
-use smithay::backend::winit::{self, WinitGraphicsBackend, WinitEventLoop};
+use crate::engine::winit::patch::{WinitEngineBackend, WinitEngineWindow};
+use smithay::reexports::winit::window::{WindowId, WindowBuilder, Window as WinitWindow};
 
 pub struct WinitEngine {
     logger:   Logger,
     running:  Arc<AtomicBool>,
+    backend:  WinitEngineBackend,
     events:   EventLoop<'static, ()>,
     outputs:  Vec<WinitOutput>,
     inputs:   Vec<WinitInput>
@@ -21,16 +21,17 @@ impl Stoppable for WinitEngine {
 
 impl Engine for WinitEngine {
     fn output_add (&mut self) -> Result<(), Box<dyn Error>> {
-        Ok(self.outputs.push(WinitOutput::new(&self.logger)?))
+        Ok(self.outputs.push(WinitOutput::new(&mut self.backend)?))
     }
 }
 
 impl WinitEngine {
     pub fn new (logger: &Logger) -> Result<Self, Box<dyn Error>> {
-        debug!(logger, "starting winit engine");
+        debug!(logger, "Starting Winit engine");
         Ok(Self {
             logger:  logger.clone(),
             running: Arc::new(AtomicBool::new(true)),
+            backend: WinitEngineBackend::new(logger)?,
             events:  EventLoop::try_new()?,
             inputs:  vec![],
             outputs: vec![]
@@ -38,27 +39,12 @@ impl WinitEngine {
     }
 }
 
-pub struct WinitOutput {
-    logger:  Logger,
-    display: Display<()>,
-    backend: WinitGraphicsBackend<Gles2Renderer>,
-    events:  WinitEventLoop,
-    size:    Size<i32, Physical>
-}
+pub struct WinitOutput(WindowId);
 
 impl WinitOutput {
-    fn new (logger: &Logger) -> Result<Self, Box<dyn Error>> {
-        let display = Display::new()?;
-        let (backend, events) = winit::init::<Gles2Renderer, _>(logger.clone())?;
-        let size = backend.window_size().physical_size;
-        debug!(logger, "new winit output {size:?}");
-        Ok(Self {
-            logger: logger.clone(),
-            display,
-            backend,
-            events,
-            size
-        })
+    fn new (backend: &mut WinitEngineBackend) -> Result<Self, Box<dyn Error>> {
+        let window = backend.window("Charlie", 720.0, 540.0)?;
+        Ok(Self(window.id()))
     }
 }
 
