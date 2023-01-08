@@ -18,5 +18,6 @@ fn main () -> Result<(), Box<dyn Error>> {
     let mut engine = engine::winit::WinitEngine::new(&logger)?;
     engine.output_add()?;
     engine.output_add()?;
+    engine.start(&mut State::new(&logger));
     Ok(())
 }

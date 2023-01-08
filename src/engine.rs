@@ -11,7 +11,11 @@ pub(crate) trait Stoppable {
         self.running().load(Ordering::SeqCst)
     }
 
-    fn stop (&self) {
+    fn start_running (&self) {
+        self.running().store(true, Ordering::SeqCst)
+    }
+
+    fn stop_running (&self) {
         self.running().store(false, Ordering::SeqCst)
     }
 
@@ -56,6 +60,10 @@ pub(crate) trait Engine: Stoppable + Sized {
     }
 
     fn render_pointer (&mut self, output: &Screen, pointer: &Point<f64, Logical>) -> Result<(), Box<dyn Error>> {
+        unimplemented!{};
+    }
+
+    fn start (&mut self, app: &mut State) {
         unimplemented!{};
     }
 

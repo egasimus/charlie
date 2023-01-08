@@ -2,6 +2,7 @@ mod patch;
 
 use crate::prelude::*;
 use crate::engine::winit::patch::{WinitEngineBackend, WinitEngineWindow};
+use smithay::backend::winit::WinitEvent;
 use smithay::reexports::winit::window::{WindowId, WindowBuilder, Window as WinitWindow};
 
 pub struct WinitEngine {
@@ -22,6 +23,22 @@ impl Stoppable for WinitEngine {
 impl Engine for WinitEngine {
     fn output_add (&mut self) -> Result<(), Box<dyn Error>> {
         Ok(self.outputs.push(WinitOutput::new(&mut self.backend)?))
+    }
+    fn start (&mut self, app: &mut State) {
+        self.start_running();
+        while self.is_running() {
+            if self.backend.dispatch(|event| match event {
+                WinitEvent::Resized { size, scale_factor } => {
+                    //panic!("host resize unsupported");
+                }
+                WinitEvent::Input(event) => {
+                    app.on_input(event)
+                }
+                _ => (),
+            }).is_err() {
+                self.stop_running()
+            }
+        }
     }
 }
 

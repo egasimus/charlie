@@ -12,9 +12,9 @@ pub(crate) struct State {
 
 impl State {
 
-    fn new (logger: Logger) -> Self {
+    pub fn new (logger: &Logger) -> Self {
         Self {
-            logger,
+            logger:  logger.clone(),
             screens: vec![],
             windows: vec![],
             pointer: (0.0, 0.0).into(),
@@ -36,7 +36,7 @@ impl State {
         Ok(())
     }
 
-    fn on_input <B: InputBackend> (&mut self, event: InputEvent<B>) {
+    pub fn on_input <B: InputBackend> (&mut self, event: InputEvent<B>) {
         debug!(self.logger, "Received input event")
     }
 
