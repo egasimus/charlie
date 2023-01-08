@@ -59,14 +59,6 @@ pub(crate) trait Engine: Stoppable + Sized {
         unimplemented!();
     }
 
-    fn render_window (&mut self, output: &Screen, window: &Window) -> Result<(), Box<dyn Error>> {
-        unimplemented!();
-    }
-
-    fn render_pointer (&mut self, output: &Screen, pointer: &Point<f64, Logical>) -> Result<(), Box<dyn Error>> {
-        unimplemented!{};
-    }
-
     fn start (&mut self, app: &mut State) {
         unimplemented!{};
     }

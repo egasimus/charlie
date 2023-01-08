@@ -28,11 +28,11 @@ impl State {
         for screen in self.screens.iter() {
             for window in self.windows.iter() {
                 if screen.contains_rect(window) {
-                    engine.render_window(screen, window)?;
+                    //engine.render_window(screen, window)?;
                 }
             }
             if screen.contains_point(self.pointer) {
-                engine.render_pointer(screen, &self.pointer)?;
+                //engine.render_pointer(screen, &self.pointer)?;
             }
         }
         Ok(())

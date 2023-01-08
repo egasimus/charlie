@@ -36,7 +36,7 @@ impl Engine for WinitEngine {
         self.inputs.push(WinitInput {});
         unimplemented!();
     }
-    fn start (&mut self, app: &mut State) {
+    fn start (&mut self, state: &mut State) {
         self.start_running();
         while self.is_running() {
             if self.backend.dispatch(|/*window_id,*/ event| match event {
@@ -44,14 +44,14 @@ impl Engine for WinitEngine {
                     //panic!("host resize unsupported");
                 }
                 WinitEvent::Input(event) => {
-                    app.on_input(event)
+                    state.on_input(event)
                 }
                 _ => (),
             }).is_err() {
                 self.stop_running()
             }
             for output in self.outputs.iter() {
-                output.render(&mut self.backend).unwrap();
+                output.render(&mut self.backend, state).unwrap();
             }
         }
     }
@@ -93,7 +93,15 @@ impl WinitOutput {
         let host_window = backend.window_add(display, name, 720.0, 540.0)?.id();
         Ok(Self { output, host_window })
     }
-    fn render (&self, backend: &mut WinitEngineBackend) -> Result<(), Box<dyn Error>> {
-        backend.window_get(&self.host_window).render()
+    fn render (&self, backend: &mut WinitEngineBackend, state: &mut State)
+        -> Result<(), Box<dyn Error>>
+    {
+        backend.window_get(&self.host_window).render(|frame|{
+            use smithay::utils::Rectangle;
+            use smithay::backend::renderer::Frame;
+            let rect: Rectangle<i32, Physical> = Rectangle::from_loc_and_size((0, 0), (100, 100));
+            frame.clear([0.4,0.3,0.2,1.0], &[rect])?;
+            Ok(())
+        })
     }
 }

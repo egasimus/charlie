@@ -44,9 +44,7 @@ impl XWaylandState {
     pub fn new (
         logger: &Logger, events: LoopHandle<'static, State>, display: &DisplayHandle
     ) -> Result<Self, Box<dyn Error>> {
-
         let (xwayland, channel) = XWayland::new(logger.clone(), &display.clone());
-
         let display = display.clone();
         events.insert_source(channel, move |event, _, data| match event {
             XWaylandEvent::Ready { connection, client, .. }
@@ -54,14 +52,13 @@ impl XWaylandState {
             XWaylandEvent::Exited
                 => data.xwayland.exited(),
         })?;
-
+        xwayland.start(events.clone())?;
         Ok(Self {
             logger: logger.clone(),
             events,
             xwayland,
             connected: None
         })
-
     }
 
     pub fn connect (
@@ -75,7 +72,7 @@ impl XWaylandState {
     }
 
     pub fn exited (&mut self) {
-        error!(self.logger, "Xwayland crashed");
+        error!(self.logger, "XWayland crashed");
     }
 }
 
@@ -122,8 +119,8 @@ impl XWaylandConnection {
         conn.flush()?;
         let conn = Arc::new(conn);
         let wm = Self {
-            logger: logger.clone(),
-            conn:   Arc::clone(&conn),
+            logger:   logger.clone(),
+            conn:     Arc::clone(&conn),
             unpaired: Default::default(),
             atoms,
             client,
@@ -139,7 +136,7 @@ impl XWaylandConnection {
                 }
             }
         })?;
-
+        info!(logger, "XWayland ready");
         Ok(wm)
     }
 
@@ -265,4 +262,3 @@ pub fn commit_hook (
         }
     }
 }
-

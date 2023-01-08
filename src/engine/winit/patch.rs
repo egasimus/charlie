@@ -5,7 +5,8 @@ use smithay::backend::egl::native::XlibWindow;
 use smithay::backend::egl::context::GlAttributes;
 use smithay::backend::egl::display::EGLDisplay;
 use smithay::backend::input::InputEvent;
-use smithay::backend::renderer::{Bind, Renderer, Frame, ImportEgl, ImportDma, gles2::Gles2Renderer};
+use smithay::backend::renderer::{Bind, Renderer, Frame, ImportEgl, ImportDma};
+use smithay::backend::renderer::gles2::{Gles2Renderer, Gles2Frame};
 use smithay::backend::winit::{
     Error as WinitError, WindowSize, WinitVirtualDevice, WinitEvent,
     WinitKeyboardInputEvent,
@@ -155,7 +156,7 @@ impl WinitEngineBackend {
         } else {
             unreachable!("No backends for winit other then Wayland and X11 are supported")
         };
-        debug!(self.logger, "Unbinding EGL context: {context:?}");
+        debug!(self.logger, "Unbinding EGL context");
         let _ = context.unbind()?;
         let mut renderer = unsafe { Gles2Renderer::new(context, self.logger.clone())? };
         renderer.bind_wl_display(&display.handle())?;
@@ -241,7 +242,10 @@ impl WinitEngineWindow {
         self.window.id()
     }
 
-    pub fn render (&mut self) -> Result<(), Box<dyn Error>> {
+    pub fn render (
+        &mut self,
+        render: impl Fn(&mut Gles2Frame)->Result<(), Box<dyn Error>>
+    ) -> Result<(), Box<dyn Error>> {
         self.renderer.bind(self.surface.clone())?;
         if let Some(size) = self.resized.take() {
             self.surface.resize(size.w, size.h, 0, 0);
@@ -249,7 +253,8 @@ impl WinitEngineWindow {
         let size = self.surface.get_size().unwrap();
         let mut frame = self.renderer.render(size, Transform::Normal)?;
         let rect: Rectangle<i32, Physical> = Rectangle::from_loc_and_size((0, 0), size);
-        frame.clear([0.2,0.3,0.4,1.0], &[rect])?;
+        //frame.clear([0.2,0.3,0.4,1.0], &[rect])?;
+        render(&mut frame)?;
         frame.finish()?;
         self.surface.swap_buffers(None)?;
         Ok(())
