@@ -20,25 +20,30 @@ thiserror = "1"
 xcursor = "0.3.3"
 xkbcommon = "0.4.0"
 deno_core = "0.165.0"
-x11rb = { version = "0.8", default-features = false, features = [ "composite" ] }
 wayland-egl = "0.30.0"
 
 [dependencies.smithay]
 path = "./smithay"
 default-features = false
 features = [
-  "use_system_lib",
   "backend_drm",
-  "backend_gbm",
   "backend_egl",
+  #"backend_gbm",
+  #"backend_libinput",
+  #"backend_session",
+  #"backend_udev",
   "backend_winit",
-  "backend_udev",
-  "backend_libinput",
-  "backend_session",
-  "wayland_frontend",
+  #"backend_x11",
+  "desktop",
   "slog-stdlog",
-  "xwayland"
+  "use_system_lib",
+  "wayland_frontend",
+  "xwayland",
+  "x11rb_event_source",
 ]
+
+[dependencies.x11rb]
+features = ["composite"]
 
 [build-dependencies]
 gl_generator = "0.14"

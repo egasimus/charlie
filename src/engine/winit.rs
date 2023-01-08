@@ -9,7 +9,7 @@ use smithay::output::{Output, PhysicalProperties, Subpixel, Mode};
 pub struct WinitEngine {
     logger:  Logger,
     running: Arc<AtomicBool>,
-    events:  EventLoop<'static, ()>,
+    events:  EventLoop<'static, State>,
     display: Display<State>,
     backend: WinitEngineBackend,
     outputs: Vec<WinitOutput>,
@@ -23,6 +23,12 @@ impl Stoppable for WinitEngine {
 }
 
 impl Engine for WinitEngine {
+    fn display_handle (&self) -> DisplayHandle {
+        self.display.handle()
+    }
+    fn event_handle (&self) -> LoopHandle<'static, State> {
+        self.events.handle()
+    }
     fn output_add (&mut self, name: &str) -> Result<(), Box<dyn Error>> {
         Ok(self.outputs.push(WinitOutput::new(name, &self.display, &mut self.backend)?))
     }
@@ -66,6 +72,8 @@ impl WinitEngine {
     }
 }
 
+pub struct WinitInput {}
+
 pub struct WinitOutput {
     output:      Output,
     host_window: WindowId,
@@ -89,5 +97,3 @@ impl WinitOutput {
         backend.window_get(&self.host_window).render()
     }
 }
-
-pub struct WinitInput {}

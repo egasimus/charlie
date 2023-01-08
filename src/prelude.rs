@@ -8,11 +8,11 @@ pub(crate) use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 pub(crate) use std::time::Instant;
 
-pub(crate) use slog::{Logger, Drain, o, info, debug, warn, trace};
+pub(crate) use slog::{Logger, Drain, o, info, debug, warn, trace, error};
 
-pub(crate) use smithay::reexports::calloop::EventLoop;
+pub(crate) use smithay::reexports::calloop::{EventLoop, LoopHandle};
 
-pub(crate) use smithay::reexports::wayland_server::Display;
+pub(crate) use smithay::reexports::wayland_server::{Display, DisplayHandle};
 
 pub(crate) use smithay::utils::{Size, Point, Logical, Physical};
 

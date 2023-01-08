@@ -27,6 +27,10 @@ pub(crate) trait Engine: Stoppable + Sized {
         Ok(self)
     }
 
+    fn display_handle (&self) -> DisplayHandle;
+
+    fn event_handle (&self) -> LoopHandle<'static, State>;
+
     fn output_add (&mut self, name: &str) -> Result<(), Box<dyn Error>> {
         unimplemented!();
     }

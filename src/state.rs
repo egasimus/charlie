@@ -1,5 +1,5 @@
 use crate::prelude::*;
-
+use crate::xwayland::XWaylandState;
 use smithay::backend::input::{InputBackend, InputEvent};
 
 pub struct State {
@@ -7,18 +7,20 @@ pub struct State {
     screens:      Vec<Screen>,
     windows:      Vec<Window>,
     pointer:      Point<f64, Logical>,
-    pointer_last: Point<f64, Logical>
+    pointer_last: Point<f64, Logical>,
+    pub xwayland: XWaylandState
 }
 
 impl State {
 
-    pub fn new (logger: &Logger) -> Self {
+    pub fn new (logger: &Logger, xwayland: XWaylandState) -> Self {
         Self {
             logger:  logger.clone(),
             screens: vec![],
             windows: vec![],
             pointer: (0.0, 0.0).into(),
             pointer_last: (0.0, 0.0).into(),
+            xwayland
         }
     }
 
