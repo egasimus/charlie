@@ -5,7 +5,7 @@ use smithay::backend::egl::native::XlibWindow;
 use smithay::backend::egl::context::GlAttributes;
 use smithay::backend::egl::display::EGLDisplay;
 use smithay::backend::input::InputEvent;
-use smithay::backend::renderer::{Bind, Unbind, Renderer, Frame, gles2::Gles2Renderer};
+use smithay::backend::renderer::{Bind, Renderer, Frame, ImportEgl, ImportDma, gles2::Gles2Renderer};
 use smithay::backend::winit::{
     Error as WinitError, WindowSize, WinitVirtualDevice, WinitEvent,
     WinitKeyboardInputEvent,
@@ -21,6 +21,18 @@ use smithay::reexports::winit::{
     window::{WindowId, WindowBuilder, Window as WinitWindow},
 };
 use smithay::utils::{Rectangle, Transform};
+use smithay::{
+    delegate_dmabuf,
+    backend::allocator::dmabuf::Dmabuf,
+    reexports::wayland_server::protocol::{
+        wl_buffer::WlBuffer,
+        wl_surface::WlSurface
+    },
+    wayland::{
+        buffer::BufferHandler,
+        dmabuf::{DmabufHandler, DmabufState, DmabufGlobal, ImportError}
+    }
+};
 use wayland_egl as wegl;
 
 /// Contains the main event loop, spawns one or more windows, and dispatches events to them.
@@ -58,7 +70,7 @@ impl WinitEngineBackend {
     }
 
     pub fn window_add (
-        &mut self, title: &str, width: f64, height: f64
+        &mut self, display: &Display<State>, title: &str, width: f64, height: f64
     ) -> Result<&mut WinitEngineWindow, Box<dyn Error>> {
         debug!(self.logger, "Initializing Winit window: {title} ({width}x{height})");
         let window = WindowBuilder::new()
@@ -111,6 +123,15 @@ impl WinitEngineBackend {
         debug!(self.logger, "Unbinding EGL context: {context:?}");
         let _ = context.unbind()?;
 
+        let mut renderer = unsafe { Gles2Renderer::new(context, self.logger.clone())? };
+        renderer.bind_wl_display(&display.handle())?;
+        info!(self.logger, "EGL hardware-acceleration enabled");
+        let dmabuf_formats = renderer.dmabuf_formats().cloned().collect::<Vec<_>>();
+        let mut dmabuf_state = DmabufState::new();
+        let dmabuf_global = dmabuf_state.create_global::<WinitEngineWindow, _>(
+            &display.handle(), dmabuf_formats, self.logger.clone(),
+        );
+
         self.windows.insert(window_id, WinitEngineWindow {
             logger: self.logger.clone(),
             title:  title.into(),
@@ -118,9 +139,11 @@ impl WinitEngineBackend {
             height,
             closing: false,
             rollover: 0,
-            renderer: unsafe { Gles2Renderer::new(context, self.logger.clone())?.into() },
+            renderer,
             surface: Rc::new(surface),
             resized: Rc::new(Cell::new(None)),
+            dmabuf_state,
+            dmabuf_global,
             size: {
                 let (w, h): (u32, u32) = window.inner_size().into();
                 Rc::new(RefCell::new(WindowSize {
@@ -190,18 +213,20 @@ pub enum WinitEngineBackendError {
 }
 
 pub struct WinitEngineWindow {
-    logger:   Logger,
-    title:    String,
-    width:    f64,
-    height:   f64,
-    window:   Arc<WinitWindow>,
-    closing:  bool,
-    rollover: u32,
-    renderer: Gles2Renderer,
-    surface:  Rc<EGLSurface>,
-    resized:  Rc<Cell<Option<Size<i32, Physical>>>>,
-    size:     Rc<RefCell<WindowSize>>,
-    is_x11:   bool,
+    logger:        Logger,
+    title:         String,
+    width:         f64,
+    height:        f64,
+    window:        Arc<WinitWindow>,
+    closing:       bool,
+    rollover:      u32,
+    renderer:      Gles2Renderer,
+    surface:       Rc<EGLSurface>,
+    resized:       Rc<Cell<Option<Size<i32, Physical>>>>,
+    size:          Rc<RefCell<WindowSize>>,
+    is_x11:        bool,
+    dmabuf_state:  DmabufState,
+    dmabuf_global: DmabufGlobal
 }
 
 impl WinitEngineWindow {
@@ -215,11 +240,12 @@ impl WinitEngineWindow {
         if let Some(size) = self.resized.take() {
             self.surface.resize(size.w, size.h, 0, 0);
         }
-        let size  = self.surface.get_size().unwrap();
+        let size = self.surface.get_size().unwrap();
         let mut frame = self.renderer.render(size, Transform::Normal)?;
         let rect: Rectangle<i32, Physical> = Rectangle::from_loc_and_size((0, 0), size);
         frame.clear([1.0,1.0,1.0,1.0], &[rect])?;
         frame.finish()?;
+        self.surface.swap_buffers(None)?;
         Ok(())
     }
 
@@ -347,3 +373,22 @@ impl WinitEngineWindow {
     }
 
 }
+
+impl BufferHandler for WinitEngineWindow {
+    fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
+}
+
+impl DmabufHandler for WinitEngineWindow {
+    fn dmabuf_state(&mut self) -> &mut DmabufState {
+        &mut self.dmabuf_state
+    }
+
+    fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf) -> Result<(), ImportError> {
+        self.renderer
+            .import_dmabuf(&dmabuf, None)
+            .map(|_| ())
+            .map_err(|_| ImportError::Failed)
+    }
+}
+
+delegate_dmabuf!(WinitEngineWindow);

@@ -4,16 +4,16 @@ use crate::prelude::*;
 use crate::engine::winit::patch::WinitEngineBackend;
 use smithay::backend::winit::WinitEvent;
 use smithay::reexports::winit::window::WindowId;
-use smithay::output::{Output, PhysicalProperties, Subpixel};
+use smithay::output::{Output, PhysicalProperties, Subpixel, Mode};
 
 pub struct WinitEngine {
-    logger:   Logger,
-    running:  Arc<AtomicBool>,
-    events:   EventLoop<'static, ()>,
-    display:  Display<State>,
-    backend:  WinitEngineBackend,
-    outputs:  Vec<WinitOutput>,
-    inputs:   Vec<WinitInput>
+    logger:  Logger,
+    running: Arc<AtomicBool>,
+    events:  EventLoop<'static, ()>,
+    display: Display<State>,
+    backend: WinitEngineBackend,
+    outputs: Vec<WinitOutput>,
+    inputs:  Vec<WinitInput>
 }
 
 impl Stoppable for WinitEngine {
@@ -24,7 +24,7 @@ impl Stoppable for WinitEngine {
 
 impl Engine for WinitEngine {
     fn output_add (&mut self, name: &str) -> Result<(), Box<dyn Error>> {
-        Ok(self.outputs.push(WinitOutput::new(name, &mut self.backend)?))
+        Ok(self.outputs.push(WinitOutput::new(name, &self.display, &mut self.backend)?))
     }
     fn input_add (&mut self) -> Result<(), Box<dyn Error>> {
         self.inputs.push(WinitInput {});
@@ -72,14 +72,17 @@ pub struct WinitOutput {
 }
 
 impl WinitOutput {
-    fn new (name: &str, backend: &mut WinitEngineBackend) -> Result<Self, Box<dyn Error>> {
-        let output = Output::new(name.to_string(), PhysicalProperties {
+    fn new (
+        name: &str, display: &Display<State>, backend: &mut WinitEngineBackend
+    ) -> Result<Self, Box<dyn Error>> {
+        let mut output = Output::new(name.to_string(), PhysicalProperties {
             size:     (720, 540).into(),
             subpixel: Subpixel::Unknown,
             make:     "Smithay".into(),
             model:    "Winit".into()
         }, backend.logger.clone());
-        let host_window = backend.window_add(name, 720.0, 540.0)?.id();
+        output.set_preferred(Mode { size: (720, 540).into(), refresh: 60_000 });
+        let host_window = backend.window_add(display, name, 720.0, 540.0)?.id();
         Ok(Self { output, host_window })
     }
     fn render (&self, backend: &mut WinitEngineBackend) -> Result<(), Box<dyn Error>> {

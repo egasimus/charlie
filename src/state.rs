@@ -2,7 +2,7 @@ use crate::prelude::*;
 
 use smithay::backend::input::{InputBackend, InputEvent};
 
-pub(crate) struct State {
+pub struct State {
     logger:       Logger,
     screens:      Vec<Screen>,
     windows:      Vec<Window>,
@@ -43,7 +43,7 @@ impl State {
 }
 
 
-pub(crate) struct Screen {
+pub struct Screen {
     location: Point<f64, Logical>,
     size:     Size<f64, Logical>
 }
@@ -57,7 +57,7 @@ impl Screen {
     }
 }
 
-pub(crate) struct Window {
+pub struct Window {
     location: Point<f64, Logical>,
     size:     Size<f64, Logical>
 }
