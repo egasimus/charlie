@@ -5,7 +5,7 @@ use smithay::backend::egl::native::XlibWindow;
 use smithay::backend::egl::context::GlAttributes;
 use smithay::backend::egl::display::EGLDisplay;
 use smithay::backend::input::InputEvent;
-use smithay::backend::renderer::gles2::Gles2Renderer;
+use smithay::backend::renderer::{Bind, Unbind, Renderer, Frame, gles2::Gles2Renderer};
 use smithay::backend::winit::{
     Error as WinitError, WindowSize, WinitVirtualDevice, WinitEvent,
     WinitKeyboardInputEvent,
@@ -20,6 +20,7 @@ use smithay::reexports::winit::{
     platform::unix::WindowExtUnix,
     window::{WindowId, WindowBuilder, Window as WinitWindow},
 };
+use smithay::utils::{Rectangle, Transform};
 use wayland_egl as wegl;
 
 /// Contains the main event loop, spawns one or more windows, and dispatches events to them.
@@ -56,7 +57,7 @@ impl WinitEngineBackend {
         })
     }
 
-    pub fn window (
+    pub fn window_add (
         &mut self, title: &str, width: f64, height: f64
     ) -> Result<&mut WinitEngineWindow, Box<dyn Error>> {
         debug!(self.logger, "Initializing Winit window: {title} ({width}x{height})");
@@ -131,7 +132,11 @@ impl WinitEngineBackend {
             is_x11
         });
 
-        Ok(self.windows.get_mut(&window_id).unwrap())
+        Ok(self.window_get(&window_id))
+    }
+
+    pub fn window_get (&mut self, window_id: &WindowId) -> &mut WinitEngineWindow {
+        self.windows.get_mut(&window_id).unwrap()
     }
 
     pub fn dispatch (&mut self, mut callback: impl FnMut(WinitEvent))
@@ -203,6 +208,19 @@ impl WinitEngineWindow {
 
     pub fn id (&self) -> WindowId {
         self.window.id()
+    }
+
+    pub fn render (&mut self) -> Result<(), Box<dyn Error>> {
+        self.renderer.bind(self.surface.clone())?;
+        if let Some(size) = self.resized.take() {
+            self.surface.resize(size.w, size.h, 0, 0);
+        }
+        let size  = self.surface.get_size().unwrap();
+        let mut frame = self.renderer.render(size, Transform::Normal)?;
+        let rect: Rectangle<i32, Physical> = Rectangle::from_loc_and_size((0, 0), size);
+        frame.clear([1.0,1.0,1.0,1.0], &[rect])?;
+        //self.renderer.unbind()?;
+        Ok(())
     }
 
     fn dispatch (

@@ -27,7 +27,7 @@ impl Engine for WinitEngine {
     fn start (&mut self, app: &mut State) {
         self.start_running();
         while self.is_running() {
-            if self.backend.dispatch(|event| match event {
+            if self.backend.dispatch(|/*window_id,*/ event| match event {
                 WinitEvent::Resized { size, scale_factor } => {
                     //panic!("host resize unsupported");
                 }
@@ -37,6 +37,9 @@ impl Engine for WinitEngine {
                 _ => (),
             }).is_err() {
                 self.stop_running()
+            }
+            for output in self.outputs.iter() {
+                output.render(&mut self.backend).unwrap();
             }
         }
     }
@@ -60,8 +63,11 @@ pub struct WinitOutput(WindowId);
 
 impl WinitOutput {
     fn new (backend: &mut WinitEngineBackend) -> Result<Self, Box<dyn Error>> {
-        let window = backend.window("Charlie", 720.0, 540.0)?;
-        Ok(Self(window.id()))
+        let host_window = backend.window_add("Charlie", 720.0, 540.0)?;
+        Ok(Self(host_window.id()))
+    }
+    fn render (&self, backend: &mut WinitEngineBackend) -> Result<(), Box<dyn Error>> {
+        backend.window_get(&self.0).render()
     }
 }
 
