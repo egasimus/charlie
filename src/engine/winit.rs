@@ -96,12 +96,12 @@ impl WinitOutput {
     fn render (&self, backend: &mut WinitEngineBackend, state: &mut State)
         -> Result<(), Box<dyn Error>>
     {
-        backend.window_get(&self.host_window).render(|frame|{
+        backend.window_get(&self.host_window).render(|frame, size|{
             use smithay::utils::Rectangle;
             use smithay::backend::renderer::Frame;
-            let rect: Rectangle<i32, Physical> = Rectangle::from_loc_and_size((0, 0), (100, 100));
-            frame.clear([0.4,0.3,0.2,1.0], &[rect])?;
-            Ok(())
+            let rect: Rectangle<i32, Physical> = Rectangle::from_loc_and_size((0, 0), size);
+            frame.clear([0.2,0.3,0.4,1.0], &[rect])?;
+            state.render(frame, size)
         })
     }
 }

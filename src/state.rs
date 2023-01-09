@@ -24,7 +24,11 @@ impl State {
         }
     }
 
-    fn render (&self, engine: &mut impl Engine) -> Result<(), Box<dyn Error>> {
+    pub fn render (
+        &self,
+        frame: &mut Gles2Frame,
+        size:  Size<i32, Physical>
+    ) -> Result<(), Box<dyn Error>> {
         for screen in self.screens.iter() {
             for window in self.windows.iter() {
                 if screen.contains_rect(window) {

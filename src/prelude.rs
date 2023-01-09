@@ -10,6 +10,8 @@ pub(crate) use std::time::Instant;
 
 pub(crate) use slog::{Logger, Drain, o, info, debug, warn, trace, error};
 
+pub(crate) use smithay::backend::renderer::gles2::{Gles2Renderer, Gles2Frame};
+
 pub(crate) use smithay::reexports::calloop::{EventLoop, LoopHandle};
 
 pub(crate) use smithay::reexports::wayland_server::{Display, DisplayHandle};

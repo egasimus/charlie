@@ -16,7 +16,7 @@ use smithay::backend::winit::{
 use smithay::reexports::winit::{
     dpi::LogicalSize,
     event::{Event, WindowEvent, ElementState, KeyboardInput, Touch, TouchPhase},
-    event_loop::{EventLoop, ControlFlow},
+    event_loop::{EventLoop as WinitEventLoop, ControlFlow},
     platform::run_return::EventLoopExtRunReturn,
     platform::unix::WindowExtUnix,
     window::{WindowId, WindowBuilder, Window as WinitWindow},
@@ -39,9 +39,9 @@ use wayland_egl as wegl;
 /// Contains the main event loop, spawns one or more windows, and dispatches events to them.
 pub struct WinitEngineBackend {
     pub logger: Logger,
-    events:  EventLoop<()>,
+    events:  WinitEventLoop<()>,
     started: Option<Instant>,
-    display: EGLDisplay,
+    egl:     EGLDisplay,
     damage:  bool,
     windows: HashMap<WindowId, WinitEngineWindow>
 }
@@ -50,7 +50,7 @@ impl WinitEngineBackend {
 
     pub fn new (logger: &Logger) -> Result<Self, Box<dyn Error>> {
         debug!(logger, "Initializing Winit event loop");
-        let events = EventLoop::new();
+        let events = WinitEventLoop::new();
         // Null window to host the EGLDisplay
         let window = Arc::new(WindowBuilder::new()
             .with_inner_size(LogicalSize::new(16, 16))
@@ -58,115 +58,27 @@ impl WinitEngineBackend {
             .with_visible(false)
             .build(&events)
             .map_err(WinitError::InitFailed)?);
-        let display = EGLDisplay::new(window, logger.clone()).unwrap();
-        let damage  = display.supports_damage();
+        let egl = EGLDisplay::new(window, logger.clone()).unwrap();
+        let damage = egl.supports_damage();
         Ok(Self {
             logger:  logger.clone(),
             events,
-            display,
+            egl,
             damage,
             started: None,
             windows: HashMap::new()
         })
     }
 
-    pub fn display (&self) -> &EGLDisplay {
-        &self.display
-    }
-
     pub fn window_add (
         &mut self, display: &Display<State>, title: &str, width: f64, height: f64
     ) -> Result<&mut WinitEngineWindow, Box<dyn Error>> {
-        debug!(self.logger, "Initializing Winit window: {title} ({width}x{height})");
-        let (window_id, window) = self.window_build(title, width, height)?;
-        let (surface, renderer, is_x11) = self.window_setup(display, &window)?;
-        self.windows.insert(window_id, WinitEngineWindow {
-            logger: self.logger.clone(),
-            title:  title.into(),
-            closing: false,
-            rollover: 0,
-            size: {
-                let (w, h): (u32, u32) = window.inner_size().into();
-                Rc::new(RefCell::new(WindowSize {
-                    physical_size: (w as i32, h as i32).into(),
-                    scale_factor: window.scale_factor(),
-                }))
-            },
-            resized: Rc::new(Cell::new(None)),
-            width,
-            height,
-            window,
-            surface,
-            renderer,
-            is_x11,
-            //dmabuf_state,
-            //dmabuf_global,
-        });
-
-        Ok(self.window_get(&window_id))
-    }
-
-    fn window_build (&self, title: &str, width: f64, height: f64)
-        -> Result<(WindowId, Arc<WinitWindow>), Box<dyn Error>>
-    {
-        let window = WindowBuilder::new()
-            .with_inner_size(LogicalSize::new(width, height))
-            .with_title(title)
-            .with_visible(true)
-            .build(&self.events)
-            .map_err(WinitError::InitFailed)?;
-        let window_id = window.id();
-        let window = Arc::new(window);
-        debug!(self.logger, "Created Winit window: {title} ({width}x{height})");
-        Ok((window_id, window))
-    }
-
-    fn window_setup (&self, display: &Display<State>, window: &WinitWindow)
-        -> Result<(Rc<EGLSurface>, Gles2Renderer, bool), Box<dyn Error>>
-    {
-        let gl_attributes = GlAttributes {
-            version: (3, 0), profile: None, vsync: true, debug: cfg!(debug_assertions),
-        };
-        let context = EGLContext::new_with_config(
-            &self.display, gl_attributes, Default::default(), self.logger.clone()
+        let window = WinitEngineWindow::new(
+            &self.logger, &self.events, display, &self.egl, title, width, height
         )?;
-        debug!(self.logger, "Created EGL context for Winit window");
-        let is_x11 = !window.wayland_surface().is_some();
-        let surface = if let Some(wl_surface) = window.wayland_surface() {
-            debug!(self.logger, "Using Wayland backend for Winit window");
-            let (width, height): (i32, i32) = window.inner_size().into();
-            EGLSurface::new(
-                &self.display,
-                context.pixel_format().unwrap(),
-                context.config_id(),
-                unsafe {
-                    wegl::WlEglSurface::new_from_raw(wl_surface as *mut _, width, height)
-                }.map_err(|err| WinitError::Surface(err.into()))?,
-                self.logger.clone(),
-            ).map_err(EGLError::CreationFailed)?
-        } else if let Some(xlib_window) = window.xlib_window().map(XlibWindow) {
-            debug!(self.logger, "Using X11 backend for Winit window {xlib_window:?}");
-            EGLSurface::new(
-                &self.display,
-                context.pixel_format().unwrap(),
-                context.config_id(),
-                xlib_window,
-                self.logger.clone(),
-            ).map_err(EGLError::CreationFailed)?
-        } else {
-            unreachable!("No backends for winit other then Wayland and X11 are supported")
-        };
-        debug!(self.logger, "Unbinding EGL context");
-        let _ = context.unbind()?;
-        let mut renderer = unsafe { Gles2Renderer::new(context, self.logger.clone())? };
-        renderer.bind_wl_display(&display.handle())?;
-        info!(self.logger, "EGL hardware-acceleration enabled");
-        //let dmabuf_formats = renderer.dmabuf_formats().cloned().collect::<Vec<_>>();
-        //let mut dmabuf_state = DmabufState::new();
-        //let dmabuf_global = dmabuf_state.create_global::<WinitEngineWindow, _>(
-            //&display.handle(), dmabuf_formats, self.logger.clone(),
-        //);
-        Ok((Rc::new(surface), renderer, is_x11))
+        let window_id = window.id();
+        self.windows.insert(window_id, window);
+        Ok(self.window_get(&window_id))
     }
 
     pub fn window_get (&mut self, window_id: &WindowId) -> &mut WinitEngineWindow {
@@ -238,13 +150,119 @@ pub struct WinitEngineWindow {
 
 impl WinitEngineWindow {
 
+    pub fn new (
+        logger:  &Logger,
+        events:  &WinitEventLoop<()>,
+        display: &Display<State>,
+        egl:     &EGLDisplay,
+        title:   &str,
+        width:   f64,
+        height:  f64
+    ) -> Result<Self, Box<dyn Error>> {
+        debug!(logger, "Initializing Winit window: {title} ({width}x{height})");
+        let (window_id, window) = Self::window_build(logger, events, title, width, height)?;
+        debug!(logger, "Created Winit window: {title} ({width}x{height})");
+        let (surface, renderer, is_x11) = Self::window_setup(logger, display, egl, &window)?;
+        Ok(Self {
+            logger:   logger.clone(),
+            title:    title.into(),
+            closing:  false,
+            rollover: 0,
+            size: {
+                let (w, h): (u32, u32) = window.inner_size().into();
+                Rc::new(RefCell::new(WindowSize {
+                    physical_size: (w as i32, h as i32).into(),
+                    scale_factor: window.scale_factor(),
+                }))
+            },
+            resized: Rc::new(Cell::new(None)),
+            width,
+            height,
+            window,
+            surface,
+            renderer,
+            is_x11,
+            //dmabuf_state,
+            //dmabuf_global,
+        })
+    }
+
+    fn window_build (
+        logger: &Logger,
+        events: &WinitEventLoop<()>,
+        title:  &str,
+        width:  f64,
+        height: f64
+    ) -> Result<(WindowId, Arc<WinitWindow>), Box<dyn Error>> {
+        let window = WindowBuilder::new()
+            .with_inner_size(LogicalSize::new(width, height))
+            .with_title(title)
+            .with_visible(true)
+            .build(events)
+            .map_err(WinitError::InitFailed)?;
+        let window_id = window.id();
+        let window = Arc::new(window);
+        Ok((window_id, window))
+    }
+
+    fn window_setup (
+        logger:  &Logger,
+        display: &Display<State>,
+        egl:     &EGLDisplay,
+        window:  &WinitWindow
+    ) -> Result<(Rc<EGLSurface>, Gles2Renderer, bool), Box<dyn Error>> {
+        let gl_attributes = GlAttributes {
+            version: (3, 0), profile: None, vsync: true, debug: cfg!(debug_assertions),
+        };
+        let context = EGLContext::new_with_config(
+            egl, gl_attributes, Default::default(), logger.clone()
+        )?;
+        debug!(logger, "Created EGL context for Winit window");
+        let is_x11 = !window.wayland_surface().is_some();
+        let surface = if let Some(wl_surface) = window.wayland_surface() {
+            debug!(logger, "Using Wayland backend for Winit window");
+            let (width, height): (i32, i32) = window.inner_size().into();
+            EGLSurface::new(
+                egl,
+                context.pixel_format().unwrap(),
+                context.config_id(),
+                unsafe {
+                    wegl::WlEglSurface::new_from_raw(wl_surface as *mut _, width, height)
+                }.map_err(|err| WinitError::Surface(err.into()))?,
+                logger.clone(),
+            ).map_err(EGLError::CreationFailed)?
+        } else if let Some(xlib_window) = window.xlib_window().map(XlibWindow) {
+            debug!(logger, "Using X11 backend for Winit window {xlib_window:?}");
+            EGLSurface::new(
+                egl,
+                context.pixel_format().unwrap(),
+                context.config_id(),
+                xlib_window,
+                logger.clone(),
+            ).map_err(EGLError::CreationFailed)?
+        } else {
+            unreachable!("No backends for winit other then Wayland and X11 are supported")
+        };
+        debug!(logger, "Unbinding EGL context");
+        let _ = context.unbind()?;
+        let mut renderer = unsafe { Gles2Renderer::new(context, logger.clone())? };
+        renderer.bind_wl_display(&display.handle())?;
+        info!(logger, "EGL hardware-acceleration enabled");
+        //let dmabuf_formats = renderer.dmabuf_formats().cloned().collect::<Vec<_>>();
+        //let mut dmabuf_state = DmabufState::new();
+        //let dmabuf_global = dmabuf_state.create_global::<WinitEngineWindow, _>(
+            //&display.handle(), dmabuf_formats, self.logger.clone(),
+        //);
+        Ok((Rc::new(surface), renderer, is_x11))
+    }
+
     pub fn id (&self) -> WindowId {
         self.window.id()
     }
 
     pub fn render (
         &mut self,
-        render: impl Fn(&mut Gles2Frame)->Result<(), Box<dyn Error>>
+        render: impl Fn(&mut Gles2Frame, Size<i32, Physical>)->Result<(), Box<dyn Error>>
     ) -> Result<(), Box<dyn Error>> {
         self.renderer.bind(self.surface.clone())?;
         if let Some(size) = self.resized.take() {
@@ -252,9 +270,7 @@ impl WinitEngineWindow {
         }
         let size = self.surface.get_size().unwrap();
         let mut frame = self.renderer.render(size, Transform::Normal)?;
-        let rect: Rectangle<i32, Physical> = Rectangle::from_loc_and_size((0, 0), size);
-        //frame.clear([0.2,0.3,0.4,1.0], &[rect])?;
-        render(&mut frame)?;
+        render(&mut frame, size)?;
         frame.finish()?;
         self.surface.swap_buffers(None)?;
         Ok(())
