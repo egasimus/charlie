@@ -1,7 +1,7 @@
 mod patch;
 
 use crate::prelude::*;
-use crate::engine::winit::patch::WinitEngineBackend;
+use crate::engine::winit::patch::WinitHost;
 use smithay::backend::winit::WinitEvent;
 use smithay::reexports::winit::window::WindowId;
 use smithay::output::{Output, PhysicalProperties, Subpixel, Mode};
@@ -11,7 +11,7 @@ pub struct WinitEngine {
     running: Arc<AtomicBool>,
     events:  EventLoop<'static, State>,
     display: Display<State>,
-    backend: WinitEngineBackend,
+    backend: WinitHost,
     outputs: Vec<WinitOutput>,
     inputs:  Vec<WinitInput>
 }
@@ -48,7 +48,8 @@ impl Engine for WinitEngine {
                 }
                 _ => (),
             }).is_err() {
-                self.stop_running()
+                self.stop_running();
+                break
             }
             for output in self.outputs.iter() {
                 output.render(&mut self.backend, state).unwrap();
@@ -65,7 +66,7 @@ impl WinitEngine {
             running: Arc::new(AtomicBool::new(true)),
             events:  EventLoop::try_new()?,
             display: Display::new()?,
-            backend: WinitEngineBackend::new(logger)?,
+            backend: WinitHost::new(logger)?,
             inputs:  vec![],
             outputs: vec![]
         })
@@ -81,7 +82,7 @@ pub struct WinitOutput {
 
 impl WinitOutput {
     fn new (
-        name: &str, display: &Display<State>, backend: &mut WinitEngineBackend
+        name: &str, display: &Display<State>, backend: &mut WinitHost
     ) -> Result<Self, Box<dyn Error>> {
         let output = Output::new(name.to_string(), PhysicalProperties {
             size:     (720, 540).into(),
@@ -96,7 +97,7 @@ impl WinitOutput {
         let host_window = backend.window_add(display, name, 720.0, 540.0)?.id();
         Ok(Self { output, host_window })
     }
-    fn render (&self, backend: &mut WinitEngineBackend, state: &mut State)
+    fn render (&self, backend: &mut WinitHost, state: &mut State)
         -> Result<(), Box<dyn Error>>
     {
         backend.window_get(&self.host_window).render(|frame, size|{
