@@ -22,7 +22,7 @@ impl DelegatedState {
     pub fn new (engine: &impl Engine) -> Result<Self, Box<dyn Error>> {
         let dh = engine.display_handle();
         Ok(Self {
-            logger: engine.logger(),
+            logger:               engine.logger(),
             compositor_state:     CompositorState::new::<State, _>(&dh, engine.logger()),
             xdg_shell_state:      XdgShellState::new::<State, _>(&dh, engine.logger()),
             shm_state:            ShmState::new::<State, _>(&dh, vec![], engine.logger()),
