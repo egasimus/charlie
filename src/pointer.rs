@@ -29,7 +29,7 @@ impl Pointer {
             logger:        engine.logger(),
             texture:       import_bitmap(engine.renderer(), "data/cursor.png")?,
             status:        Arc::new(Mutex::new(Status::Default)),
-            position:      (300.0, 200.0).into(),
+            position:      (100.0, 30.0).into(),
             last_position: (0.0, 0.0).into(),
         })
     }
@@ -55,17 +55,20 @@ impl Pointer {
         (visible, position)
     }
     pub fn render (&self, frame: &mut Gles2Frame, size: Size<i32, Physical>) -> Result<(), Box<dyn Error>> {
+        let damage = Rectangle::<i32, Physical>::from_loc_and_size(
+            Point::<i32, Physical>::from((0i32, 0i32)),
+            size
+        );
         let position = self.position.to_physical(1.0).to_i32_round();
-        let size     = self.texture.size();
-        debug!(&self.logger, "Render pointer at {position:?} ({size:?})");
-        //let damage   = Rectangle::<i32, Physical>::from_loc_and_size(position, (10.0, 10.0).into());
+        debug!(&self.logger, "Render pointer at {position:?} ({damage:?})");
+        //let size = self.texture.size();
         Ok(frame.render_texture_at(
             &self.texture,
             position,
             1,
             1.0,
-            Transform::Normal,
-            &[/*damage*/],
+            Transform::Flipped180,
+            &[damage],
             1.0
         )?)
     }
