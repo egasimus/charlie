@@ -5,6 +5,7 @@ mod engine;
 mod xwayland;
 mod state;
 mod pointer;
+mod handle;
 //mod backend;
 //mod app;
 //mod compositor;

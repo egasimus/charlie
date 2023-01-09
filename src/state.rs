@@ -66,10 +66,7 @@ impl Screen {
         center: impl Into<Point<f64, Logical>>,
         size:   impl Into<Size<f64, Logical>>
     ) -> Self {
-        Self {
-            center: center.into(),
-            size:   size.into()
-        }
+        Self { center: center.into(), size: size.into() }
     }
     #[inline]
     pub fn center (&self) -> &Point<f64, Logical> {
