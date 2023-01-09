@@ -10,6 +10,8 @@ pub(crate) use std::time::Instant;
 
 pub(crate) use std::path::Path;
 
+pub(crate) use std::collections::HashMap;
+
 pub(crate) use slog::{Logger, Drain, o, info, debug, warn, trace, error};
 
 pub(crate) use smithay::backend::renderer::gles2::{
