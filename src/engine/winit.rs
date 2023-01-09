@@ -77,8 +77,8 @@ impl Engine for WinitEngine {
     fn renderer (&mut self) -> &mut Gles2Renderer {
         self.host.renderer()
     }
-    fn output_add (&mut self, name: &str) -> Result<(), Box<dyn Error>> {
-        Ok(self.outputs.push(WinitOutput::new(name, &self.display, &mut self.host)?))
+    fn output_add (&mut self, name: &str, screen: usize) -> Result<(), Box<dyn Error>> {
+        Ok(self.outputs.push(WinitOutput::new(name, &mut self.host, screen)?))
     }
     fn input_add (&mut self) -> Result<(), Box<dyn Error>> {
         self.inputs.push(WinitInput {});
@@ -124,6 +124,7 @@ impl WinitEngine {
 pub struct WinitInput {}
 
 pub struct WinitOutput {
+    screen:         usize,
     output:         Output,
     host_window_id: WindowId,
 }
@@ -132,8 +133,8 @@ impl WinitOutput {
 
     fn new (
         name:    &str,
-        display: &Display<State>,
-        host:    &mut WinitHost
+        host:    &mut WinitHost,
+        screen:  usize,
     ) -> Result<Self, Box<dyn Error>> {
         let output = Output::new(name.to_string(), PhysicalProperties {
             size:     (720, 540).into(),
@@ -145,8 +146,8 @@ impl WinitOutput {
             size: (720, 540).into(),
             refresh: 60_000
         });
-        let host_window_id = host.window_add(display, name, 720.0, 540.0)?.id();
-        Ok(Self { output, host_window_id })
+        let host_window_id = host.window_add(name, 720.0, 540.0)?.id();
+        Ok(Self { output, host_window_id, screen })
     }
 
     fn render (&self, host: &mut WinitHost, state: &mut State)
@@ -155,7 +156,7 @@ impl WinitOutput {
         host.window_render(&self.host_window_id, &|frame, size|{
             let rect: Rectangle<i32, Physical> = Rectangle::from_loc_and_size((0, 0), size);
             frame.clear([0.2,0.3,0.4,1.0], &[rect])?;
-            state.render(frame, size)?;
+            state.render(frame, size, self.screen)?;
             Ok(())
         })
         //let renderer = host.renderer();
@@ -220,7 +221,7 @@ impl WinitHost {
     }
 
     pub fn window_add (
-        &mut self, display: &Display<State>, title: &str, width: f64, height: f64
+        &mut self, title: &str, width: f64, height: f64
     ) -> Result<&mut WinitHostWindow, Box<dyn Error>> {
         let egl = Self::make_context(&self.logger, &self.egl_context)?;
         let window = WinitHostWindow::new(&self.logger, &self.events, &egl, title, width, height)?;
