@@ -83,13 +83,16 @@ impl WinitOutput {
     fn new (
         name: &str, display: &Display<State>, backend: &mut WinitEngineBackend
     ) -> Result<Self, Box<dyn Error>> {
-        let mut output = Output::new(name.to_string(), PhysicalProperties {
+        let output = Output::new(name.to_string(), PhysicalProperties {
             size:     (720, 540).into(),
             subpixel: Subpixel::Unknown,
             make:     "Smithay".into(),
             model:    "Winit".into()
         }, backend.logger.clone());
-        output.set_preferred(Mode { size: (720, 540).into(), refresh: 60_000 });
+        output.set_preferred(Mode {
+            size: (720, 540).into(),
+            refresh: 60_000
+        });
         let host_window = backend.window_add(display, name, 720.0, 540.0)?.id();
         Ok(Self { output, host_window })
     }

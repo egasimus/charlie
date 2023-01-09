@@ -219,41 +219,58 @@ impl WinitEngineWindow {
         )?;
         debug!(logger, "Created EGL context for Winit window");
         let is_x11 = !window.wayland_surface().is_some();
-        let surface = if let Some(wl_surface) = window.wayland_surface() {
-            debug!(logger, "Using Wayland backend for Winit window");
-            let (width, height): (i32, i32) = window.inner_size().into();
-            EGLSurface::new(
-                egl,
-                context.pixel_format().unwrap(),
-                context.config_id(),
-                unsafe {
-                    wegl::WlEglSurface::new_from_raw(wl_surface as *mut _, width, height)
-                }.map_err(|err| WinitError::Surface(err.into()))?,
-                logger.clone(),
-            ).map_err(EGLError::CreationFailed)?
+        let surface = if let Some(surface) = window.wayland_surface() {
+            Self::window_setup_wl(logger, egl, &context, window.inner_size().into(), surface)?
         } else if let Some(xlib_window) = window.xlib_window().map(XlibWindow) {
-            debug!(logger, "Using X11 backend for Winit window {xlib_window:?}");
-            EGLSurface::new(
-                egl,
-                context.pixel_format().unwrap(),
-                context.config_id(),
-                xlib_window,
-                logger.clone(),
-            ).map_err(EGLError::CreationFailed)?
+            Self::window_setup_x11(logger, egl, &context, xlib_window)?
         } else {
             unreachable!("No backends for winit other then Wayland and X11 are supported")
         };
-        debug!(logger, "Unbinding EGL context");
         let _ = context.unbind()?;
         let mut renderer = unsafe { Gles2Renderer::new(context, logger.clone())? };
-        renderer.bind_wl_display(&display.handle())?;
-        info!(logger, "EGL hardware-acceleration enabled");
+        renderer.bind_wl_display(&display.handle())?; // not here?
+
         //let dmabuf_formats = renderer.dmabuf_formats().cloned().collect::<Vec<_>>();
         //let mut dmabuf_state = DmabufState::new();
         //let dmabuf_global = dmabuf_state.create_global::<WinitEngineWindow, _>(
             //&display.handle(), dmabuf_formats, self.logger.clone(),
         //);
         Ok((Rc::new(surface), renderer, is_x11))
+    }
+
+    fn window_setup_wl (
+        logger:          &Logger,
+        egl_display:     &EGLDisplay,
+        egl_context:     &EGLContext,
+        (width, height): (i32, i32),
+        surface:         *mut std::os::raw::c_void
+    ) -> Result<EGLSurface, Box<dyn Error>> {
+        debug!(logger, "Using Wayland backend for Winit window");
+        Ok(EGLSurface::new(
+            egl_display,
+            egl_context.pixel_format().unwrap(),
+            egl_context.config_id(),
+            unsafe {
+                wegl::WlEglSurface::new_from_raw(surface as *mut _, width, height)
+            }.map_err(|err| WinitError::Surface(err.into()))?,
+            logger.clone(),
+        )?)
+    }
+
+    fn window_setup_x11 (
+        logger:      &Logger,
+        egl_display: &EGLDisplay,
+        egl_context: &EGLContext,
+        window:      XlibWindow
+    ) -> Result<EGLSurface, Box<dyn Error>> {
+        debug!(logger, "Using X11 backend for Winit window {window:?}");
+        Ok(EGLSurface::new(
+            egl_display,
+            egl_context.pixel_format().unwrap(),
+            egl_context.config_id(),
+            window,
+            logger.clone(),
+        ).map_err(EGLError::CreationFailed)?)
     }
 
     pub fn id (&self) -> WindowId {
