@@ -9,7 +9,6 @@ pub(crate) use smithay::{
     delegate_xdg_shell,
     backend::renderer::utils::on_commit_buffer_handler,
     input::{
-        Seat,
         SeatHandler,
         SeatState,
         pointer::{

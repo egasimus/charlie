@@ -14,8 +14,9 @@ fn main () -> Result<(), Box<dyn Error>> {
     let mut engine = WinitEngine::new(&logger)?;
     let mut state  = State::new(&mut engine)?;
     state.startup_add("glxgears", &[]);
-    state.startup_add("wezterm",  &[]);
+    state.startup_add("wezterm", &[]);
     engine.output_add("Alice", state.screen_add(Screen::new((-100.0, 0.0), (0.0, 0.0))))?;
-    engine.output_add("Bob",   state.screen_add(Screen::new(( 100.0, 0.0), (0.0, 0.0))))?;
+    engine.output_add("Bob", state.screen_add(Screen::new(( 100.0, 0.0), (0.0, 0.0))))?;
+    state.seat_add("Charlie")?;
     engine.start(&mut state)
 }

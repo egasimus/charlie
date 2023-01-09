@@ -8,6 +8,7 @@ delegate_compositor!(State);
 delegate_shm!(State);
 delegate_xdg_shell!(State);
 
+/// Contains the state of the features that are delegated to Smithay's default implementations.
 pub struct DelegatedState {
     logger: Logger,
     pub compositor_state:     CompositorState,
@@ -16,6 +17,7 @@ pub struct DelegatedState {
     pub output_manager_state: OutputManagerState,
     pub seat_state:           SeatState<State>,
     pub data_device_state:    DataDeviceState,
+    display_handle: DisplayHandle,
 }
 
 impl DelegatedState {
@@ -29,7 +31,12 @@ impl DelegatedState {
             output_manager_state: OutputManagerState::new_with_xdg_output::<State>(&dh),
             seat_state:           SeatState::new(),
             data_device_state:    DataDeviceState::new::<State, _>(&dh, engine.logger()),
+            display_handle:       dh,
         })
+    }
+
+    pub fn seat_add (&mut self, name: impl Into<String>) -> Seat<State> {
+        self.seat_state.new_wl_seat(&self.display_handle, name.into(), self.logger.clone())
     }
 }
 

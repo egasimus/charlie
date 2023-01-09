@@ -56,6 +56,16 @@ impl State {
         self.startup.len() - 1
     }
 
+    pub fn seat_add (&mut self, name: impl Into<String>) -> Result<Seat<Self>, Box<dyn Error>> {
+        use smithay::input::keyboard::XkbConfig;
+        use smithay::wayland::input_method::InputMethodSeat;
+        let mut seat = self.delegated.seat_add(name);
+        seat.add_pointer();
+        seat.add_keyboard(XkbConfig::default(), 200, 25)?;
+        seat.add_input_method(XkbConfig::default(), 200, 25);
+        Ok(seat)
+    }
+
 }
 
 type ScreenId = usize;

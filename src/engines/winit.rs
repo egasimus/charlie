@@ -86,9 +86,8 @@ impl<W: Widget<RenderData=ScreenId>> Engine<W> for WinitEngine<W> {
     fn output_add (&mut self, name: &str, screen: ScreenId) -> Result<(), Box<dyn Error>> {
         Ok(self.winit_outputs.push(WinitOutput::new(name, &mut self.winit_host, screen)?))
     }
-    fn input_add (&mut self) -> Result<(), Box<dyn Error>> {
-        self.winit_inputs.push(WinitInput {});
-        unimplemented!();
+    fn input_add (&mut self, name: &str) -> Result<(), Box<dyn Error>> {
+        Ok(self.winit_inputs.push(WinitInput::new(name)?))
     }
     fn tick (&mut self, widget: &mut W) -> Result<(), Box<dyn Error>> {
         // Dispatch input events
@@ -112,7 +111,13 @@ impl<W: Widget<RenderData=ScreenId>> Engine<W> for WinitEngine<W> {
     }
 }
 
-pub struct WinitInput {}
+pub struct WinitInput;
+
+impl WinitInput {
+    pub fn new (name: &str) -> Result<Self, Box<dyn Error>> {
+        Ok(Self)
+    }
+}
 
 /// An output bound to a winit host window.
 #[derive(Debug)]

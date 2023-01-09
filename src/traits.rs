@@ -76,7 +76,7 @@ pub trait Engine<W: Widget>: Stoppable + Sized {
         unimplemented!();
     }
 
-    fn input_add (&mut self) -> Result<(), Box<dyn Error>> {
+    fn input_add (&mut self, name: &str) -> Result<(), Box<dyn Error>> {
         unimplemented!();
     }
 

@@ -39,6 +39,8 @@ pub(crate) use smithay::backend::{
     }
 };
 
+pub(crate) use smithay::input::Seat;
+
 pub(crate) use smithay::output::Output;
 
 pub(crate) use smithay::reexports::calloop::{EventLoop, LoopHandle};
