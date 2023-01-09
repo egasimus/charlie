@@ -1,28 +1,6 @@
-use crate::prelude::*;
+use super::prelude::*;
 
 use std::{collections::HashMap, convert::TryFrom, os::unix::net::UnixStream, sync::Arc};
-
-use smithay::{
-    desktop::{Kind, Space, Window, X11Surface},
-    reexports::wayland_server::{protocol::wl_surface::WlSurface, Client, DisplayHandle, Resource},
-    utils::{x11rb::X11Source, Logical, Point},
-    wayland::compositor::give_role,
-    xwayland::{XWayland, XWaylandEvent},
-};
-use smithay::reexports::x11rb::{
-    atom_manager,
-    connection::Connection as _,
-    errors::ReplyOrIdError,
-    protocol::{
-        composite::{ConnectionExt as _, Redirect},
-        xproto::{
-            ChangeWindowAttributesAux, ConfigWindow, ConfigureWindowAux, ConnectionExt as _,
-            EventMask, Window as X11Window, WindowClass,
-        },
-        Event,
-    },
-    rust_connection::{DefaultStream, RustConnection},
-};
 
 atom_manager! {
     Atoms: AtomsCookie {
@@ -41,9 +19,10 @@ pub struct XWaylandState {
 
 impl XWaylandState {
 
-    pub fn new (
-        logger: &Logger, events: LoopHandle<'static, State>, display: &DisplayHandle
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn new (engine: &impl Engine) -> Result<Self, Box<dyn Error>> {
+        let logger  = engine.logger();
+        let events  = engine.event_handle();
+        let display = engine.display_handle();
         let (xwayland, channel) = XWayland::new(logger.clone(), &display.clone());
         let display = display.clone();
         events.insert_source(channel, move |event, _, data| match event {

@@ -1,80 +1,4 @@
-use crate::prelude::*;
-
-use smithay::{
-    delegate_compositor,
-    delegate_data_device,
-    delegate_output,
-    delegate_seat,
-    delegate_shm,
-    delegate_xdg_shell,
-    backend::renderer::utils::on_commit_buffer_handler,
-    input::{
-        Seat,
-        SeatHandler,
-        SeatState,
-        pointer::{
-            AxisFrame,
-            ButtonEvent,
-            Focus,
-            GrabStartData as PointerGrabStartData,
-            MotionEvent,
-            PointerGrab,
-            PointerInnerHandle,
-        },
-    },
-    reexports::{
-        wayland_protocols::xdg::shell::server::xdg_toplevel,
-        wayland_server::{
-            Resource,
-            protocol::{
-                wl_seat,
-                wl_buffer,
-                wl_surface::WlSurface
-            }
-        }
-    },
-    wayland::{
-        buffer::BufferHandler,
-        compositor::{
-            self,
-            CompositorHandler,
-            CompositorState,
-            get_parent,
-            is_sync_subsurface,
-            with_states,
-        },
-        data_device::{
-            ClientDndGrabHandler,
-            DataDeviceHandler,
-            ServerDndGrabHandler
-        },
-        shm::{
-            ShmHandler,
-            ShmState
-        },
-        shell::xdg::{
-            PopupSurface,
-            PositionerState,
-            ToplevelSurface,
-            XdgShellHandler,
-            XdgShellState,
-            XdgToplevelSurfaceData,
-            SurfaceCachedState
-        },
-    },
-    desktop::{
-        Kind,
-        Space,
-        Window
-    },
-    utils::{
-        Logical,
-        Point,
-        Rectangle,
-        Size,
-        Serial
-    },
-};
+use super::prelude::*;
 
 delegate_seat!(State);
 delegate_data_device!(State);
@@ -83,87 +7,91 @@ delegate_compositor!(State);
 delegate_shm!(State);
 delegate_xdg_shell!(State);
 
+pub struct DelegatedState {
+    logger: Logger,
+    pub compositor_state:     CompositorState,
+    pub xdg_shell_state:      XdgShellState,
+    pub shm_state:            ShmState,
+    pub output_manager_state: OutputManagerState,
+    pub seat_state:           SeatState<State>,
+    pub data_device_state:    DataDeviceState,
+}
+
+impl DelegatedState {
+    pub fn new (engine: &impl Engine) -> Result<Self, Box<dyn Error>> {
+        let dh = engine.display_handle();
+        Ok(Self {
+            logger: engine.logger(),
+            compositor_state:     CompositorState::new::<State, _>(&dh, engine.logger()),
+            xdg_shell_state:      XdgShellState::new::<State, _>(&dh, engine.logger()),
+            shm_state:            ShmState::new::<State, _>(&dh, vec![], engine.logger()),
+            output_manager_state: OutputManagerState::new_with_xdg_output::<State>(&dh),
+            seat_state:           SeatState::new(),
+            data_device_state:    DataDeviceState::new::<State, _>(&dh, engine.logger()),
+        })
+    }
+}
+
 impl XdgShellHandler for State {
-    fn xdg_shell_state(&mut self) -> &mut XdgShellState {
-        &mut self.xdg_shell_state
+
+    fn xdg_shell_state (&mut self) -> &mut XdgShellState {
+        &mut self.delegated.xdg_shell_state
     }
 
-    fn new_toplevel(&mut self, surface: ToplevelSurface) {
+    fn new_toplevel (&mut self, surface: ToplevelSurface) {
         let window = Window::new(Kind::Xdg(surface));
         self.space.map_element(window, (0, 0), false);
     }
 
-    fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {
+    fn new_popup (&mut self, _surface: PopupSurface, _positioner: PositionerState) {
         // TODO: Popup handling using PopupManager
     }
 
-    fn move_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial) {
+    fn move_request (&mut self, surface: ToplevelSurface, seat: WlSeat, serial: Serial) {
         let seat = Seat::from_resource(&seat).unwrap();
-
         let wl_surface = surface.wl_surface();
-
         if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
             let pointer = seat.get_pointer().unwrap();
-
-            let window = self
-                .space
-                .elements()
-                .find(|w| w.toplevel().wl_surface() == wl_surface)
-                .unwrap()
-                .clone();
+            let window = self.space.elements().find(|w| w.toplevel().wl_surface() == wl_surface).unwrap().clone();
             let initial_window_location = self.space.element_location(&window).unwrap();
-
             let grab = MoveSurfaceGrab {
                 start_data,
                 window,
                 initial_window_location,
             };
-
             pointer.set_grab(self, grab, serial, Focus::Clear);
         }
     }
 
-    fn resize_request(
+    fn resize_request (
         &mut self,
         surface: ToplevelSurface,
-        seat: wl_seat::WlSeat,
+        seat: WlSeat,
         serial: Serial,
-        edges: xdg_toplevel::ResizeEdge,
+        edges: XdgToplevelResizeEdge,
     ) {
         let seat = Seat::from_resource(&seat).unwrap();
-
         let wl_surface = surface.wl_surface();
-
         if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
             let pointer = seat.get_pointer().unwrap();
-
-            let window = self
-                .space
-                .elements()
-                .find(|w| w.toplevel().wl_surface() == wl_surface)
-                .unwrap()
+            let window = self.space.elements()
+                .find(|w| w.toplevel().wl_surface() == wl_surface).unwrap()
                 .clone();
             let initial_window_location = self.space.element_location(&window).unwrap();
             let initial_window_size = window.geometry().size;
-
-            surface.with_pending_state(|state| {
-                state.states.set(xdg_toplevel::State::Resizing);
-            });
-
+            surface.with_pending_state(|state| { state.states.set(XdgToplevelState::Resizing); });
             surface.send_configure();
-
             let grab = ResizeSurfaceGrab::start(
                 start_data,
                 window,
                 edges.into(),
                 Rectangle::from_loc_and_size(initial_window_location, initial_window_size),
             );
-
             pointer.set_grab(self, grab, serial, Focus::Clear);
         }
     }
 
-    fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {
+    fn grab(&mut self, _surface: PopupSurface, _seat: WlSeat, _serial: Serial) {
         // TODO popup grabs
     }
 }
@@ -224,7 +152,7 @@ impl SeatHandler for State {
     type PointerFocus = WlSurface;
 
     fn seat_state(&mut self) -> &mut SeatState<State> {
-        &mut self.seat_state
+        &mut self.delegated.seat_state
     }
 
     fn cursor_image(
@@ -238,7 +166,7 @@ impl SeatHandler for State {
 
 impl DataDeviceHandler for State {
     fn data_device_state(&self) -> &smithay::wayland::data_device::DataDeviceState {
-        &self.data_device_state
+        &self.delegated.data_device_state
     }
 }
 
@@ -248,7 +176,7 @@ impl ServerDndGrabHandler for State {}
 
 impl CompositorHandler for State {
     fn compositor_state(&mut self) -> &mut CompositorState {
-        &mut self.compositor_state
+        &mut self.delegated.compositor_state
     }
 
     fn commit(&mut self, surface: &WlSurface) {
@@ -274,7 +202,7 @@ impl BufferHandler for State {
 
 impl ShmHandler for State {
     fn shm_state(&self) -> &ShmState {
-        &self.shm_state
+        &self.delegated.shm_state
     }
 }
 
@@ -348,9 +276,9 @@ bitflags::bitflags! {
     }
 }
 
-impl From<xdg_toplevel::ResizeEdge> for ResizeEdge {
+impl From<XdgToplevelResizeEdge> for ResizeEdge {
     #[inline]
-    fn from(x: xdg_toplevel::ResizeEdge) -> Self {
+    fn from(x: XdgToplevelResizeEdge) -> Self {
         Self::from_bits(x as u32).unwrap()
     }
 }
@@ -438,7 +366,7 @@ impl PointerGrab<State> for ResizeSurfaceGrab {
 
         if let Kind::Xdg(xdg) = self.window.toplevel() {
             xdg.with_pending_state(|state| {
-                state.states.set(xdg_toplevel::State::Resizing);
+                state.states.set(XdgToplevelState::Resizing);
                 state.size = Some(self.last_window_size);
             });
 
@@ -464,7 +392,7 @@ impl PointerGrab<State> for ResizeSurfaceGrab {
 
             if let Kind::Xdg(xdg) = self.window.toplevel() {
                 xdg.with_pending_state(|state| {
-                    state.states.unset(xdg_toplevel::State::Resizing);
+                    state.states.unset(XdgToplevelState::Resizing);
                     state.size = Some(self.last_window_size);
                 });
 

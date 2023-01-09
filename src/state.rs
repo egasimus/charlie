@@ -1,29 +1,38 @@
-use crate::prelude::*;
-use crate::pointer::Pointer;
-use crate::xwayland::XWaylandState;
-use smithay::backend::input::{InputBackend, InputEvent};
+mod prelude;
+mod handle;
+mod pointer;
+mod xwayland;
+
+use self::prelude::*;
+use self::handle::DelegatedState;
+use self::pointer::Pointer;
+use self::xwayland::XWaylandState;
 
 pub struct State {
-    logger:       Logger,
-    screens:      Vec<Screen>,
-    windows:      Vec<Window>,
-    pub pointer:  Pointer,
-    pub xwayland: XWaylandState
+    logger:        Logger,
+    screens:       Vec<Screen>,
+    windows:       Vec<Window>,
+    /// State of the mouse pointer
+    pub pointer:   Pointer,
+    /// State of the X11 integration.
+    pub xwayland:  XWaylandState,
+    /// States of smithay-provided implementations of compositor features
+    pub delegated: DelegatedState
 }
 
 impl State {
 
     pub fn new  (
-        logger:   &Logger,
         engine:   &mut impl Engine,
         xwayland: XWaylandState
     ) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
-            logger:  logger.clone(),
-            screens: vec![],
-            windows: vec![],
-            pointer: Pointer::new(engine)?,
-            xwayland
+            logger:    engine.logger(),
+            screens:   vec![],
+            windows:   vec![],
+            pointer:   Pointer::new(engine)?,
+            xwayland:  XWaylandState::new(engine)?,
+            delegated: DelegatedState::new(engine)?,
         })
     }
 

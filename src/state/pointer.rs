@@ -1,10 +1,6 @@
-use crate::prelude::*;
+use super::prelude::*;
 
-use smithay::backend::renderer::{Frame, Texture};
-use smithay::utils::{IsAlive, Transform, Rectangle};
-use smithay::wayland::compositor::with_states;
 use smithay::input::{
-    Seat,
     pointer::{
         CursorImageStatus as Status,
         CursorImageAttributes as Attributes
