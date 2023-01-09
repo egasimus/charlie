@@ -25,11 +25,14 @@ impl XWaylandState {
         let display = engine.display_handle();
         let (xwayland, channel) = XWayland::new(logger.clone(), &display.clone());
         let display = display.clone();
-        events.insert_source(channel, move |event, _, data| match event {
-            XWaylandEvent::Ready { connection, client, .. }
-                => data.xwayland.connect(&display, connection, client).unwrap(),
-            XWaylandEvent::Exited
-                => data.xwayland.exited(),
+        events.insert_source(channel, move |event, _, state| match event {
+            XWaylandEvent::Ready { connection, client, .. } => {
+                state.xwayland.connect(&display, connection, client).unwrap();
+                state.ready().unwrap()
+            },
+            XWaylandEvent::Exited => {
+                state.xwayland.exited()
+            },
         })?;
         xwayland.start(events.clone())?;
         Ok(Self {
@@ -50,6 +53,7 @@ impl XWaylandState {
         let events = &self.events;
         let connection = XWaylandConnection::new(&logger, display, &events, connection, client)?;
         self.connected = Some(connection);
+        debug!(self.logger, "DISPLAY={:?}", ::std::env::var("DISPLAY"));
         Ok(())
     }
 
@@ -119,7 +123,7 @@ impl XWaylandConnection {
                 }
             }
         })?;
-        info!(logger, "XWayland ready");
+        info!(logger, "XWayland is ready!");
         Ok(wm)
     }
 
@@ -232,7 +236,6 @@ pub fn commit_hook (
     surface: &WlSurface,
     dh:      &DisplayHandle,
     state:   &mut XWaylandConnection,
-    space:   &mut Space<Window>
 ) {
     if let Ok(client) = dh.get_client(surface.id()) {
         // Is this the Xwayland client?

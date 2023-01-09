@@ -10,7 +10,7 @@ pub struct WaylandListener(OsString);
 impl WaylandListener {
     pub fn new (engine: &impl Engine<State>) -> Result<Self, Box<dyn Error>> {
         let socket = ListeningSocketSource::new_auto(engine.logger()).unwrap();
-        let name   = socket.socket_name().to_os_string();
+        let name = socket.socket_name().to_os_string();
         let handle = engine.event_handle();
         let mut display = engine.display_handle();
         let logger = engine.logger();
@@ -22,8 +22,7 @@ impl WaylandListener {
         let logger = engine.logger();
         handle.insert_source(
             Generic::new(engine.display_fd(), Interest::READ, Mode::Level),
-            move |_, _, mut state| {
-                debug!(logger, "new client");
+            move |x, y, mut state| {
                 dispatch(&mut state).unwrap();
                 Ok(PostAction::Continue)
             }

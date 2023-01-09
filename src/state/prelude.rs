@@ -105,6 +105,8 @@ pub(crate) use smithay::{
         IsAlive,
         Serial,
         Transform,
+        Clock,
+        Monotonic,
         x11rb::X11Source,
     },
 };
