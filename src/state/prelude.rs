@@ -52,10 +52,18 @@ pub(crate) use smithay::{
             connection::Connection as _,
             errors::ReplyOrIdError,
             protocol::{
-                composite::{ConnectionExt as _, Redirect},
+                composite::{
+                    ConnectionExt as _,
+                    Redirect
+                },
                 xproto::{
-                    ChangeWindowAttributesAux, ConfigWindow, ConfigureWindowAux, ConnectionExt as _,
-                    EventMask, Window as X11Window, WindowClass,
+                    ChangeWindowAttributesAux,
+                    ConfigWindow,
+                    ConfigureWindowAux,
+                    ConnectionExt as _,
+                    EventMask,
+                    Window as X11Window,
+                    WindowClass,
                 },
                 Event,
             },
@@ -106,11 +114,7 @@ pub(crate) use smithay::{
     },
     utils::{
         IsAlive,
-        Logical,
-        Point,
-        Rectangle,
         Serial,
-        Size,
         Transform,
         x11rb::X11Source,
     },

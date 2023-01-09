@@ -19,7 +19,7 @@ pub struct DelegatedState {
 }
 
 impl DelegatedState {
-    pub fn new (engine: &impl Engine) -> Result<Self, Box<dyn Error>> {
+    pub fn new <S> (engine: &impl Engine<S>) -> Result<Self, Box<dyn Error>> {
         let dh = engine.display_handle();
         Ok(Self {
             logger:               engine.logger(),

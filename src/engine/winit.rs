@@ -33,45 +33,67 @@ use smithay::reexports::winit::{
 
 use smithay::utils::{Rectangle, Transform};
 
-use smithay::{
-    delegate_dmabuf,
-    backend::allocator::dmabuf::Dmabuf,
-    reexports::wayland_server::protocol::{
-        wl_buffer::WlBuffer,
-        wl_surface::WlSurface
-    },
-    wayland::{
-        buffer::BufferHandler,
-        dmabuf::{DmabufHandler, DmabufState, DmabufGlobal, ImportError}
-    }
-};
+//use smithay::{
+    //delegate_dmabuf,
+    //backend::allocator::dmabuf::Dmabuf,
+    //reexports::wayland_server::protocol::{
+        //wl_buffer::WlBuffer,
+        //wl_surface::WlSurface
+    //},
+    //wayland::{
+        //buffer::BufferHandler,
+        //dmabuf::{DmabufHandler, DmabufState, DmabufGlobal, ImportError}
+    //}
+//};
 
 use wayland_egl as wegl;
 
-pub struct WinitEngine {
+pub struct WinitEngine<S: 'static> {
     logger:  Logger,
     running: Arc<AtomicBool>,
-    events:  EventLoop<'static, State>,
-    display: Display<State>,
+    events:  EventLoop<'static, S>,
+    display: Rc<RefCell<Display<S>>>,
     host:    WinitHost,
     outputs: Vec<WinitOutput>,
     inputs:  Vec<WinitInput>
 }
 
-impl Stoppable for WinitEngine {
+impl<S> WinitEngine<S> {
+    pub fn new (logger: &Logger) -> Result<Self, Box<dyn Error>> {
+        debug!(logger, "Starting Winit engine");
+        Ok(Self {
+            logger:  logger.clone(),
+            running: Arc::new(AtomicBool::new(true)),
+            events:  EventLoop::try_new()?,
+            display: Rc::new(RefCell::new(Display::new()?)),
+            host:    WinitHost::new(logger)?,
+            inputs:  vec![],
+            outputs: vec![]
+        })
+    }
+}
+
+impl<S> Stoppable for WinitEngine<S> {
     fn running (&self) -> &Arc<AtomicBool> {
         &self.running
     }
 }
 
-impl Engine for WinitEngine {
+impl<S> Engine<S> for WinitEngine<S> {
     fn logger (&self) -> Logger {
         self.logger.clone()
     }
     fn display_handle (&self) -> DisplayHandle {
-        self.display.handle()
+        self.display.borrow().handle()
     }
-    fn event_handle (&self) -> LoopHandle<'static, State> {
+    fn display_fd (&self) -> i32 {
+        self.display.borrow_mut().backend().poll_fd().as_raw_fd()
+    }
+    fn display_dispatcher (&self) -> Box<dyn Fn(&mut S) -> Result<usize, std::io::Error>> {
+        let display = self.display.clone();
+        Box::new(move |state| { display.borrow_mut().dispatch_clients(state) })
+    }
+    fn event_handle (&self) -> LoopHandle<'static, S> {
         self.events.handle()
     }
     fn renderer (&mut self) -> &mut Gles2Renderer {
@@ -103,21 +125,6 @@ impl Engine for WinitEngine {
                 output.render(&mut self.host, state).unwrap();
             }
         }
-    }
-}
-
-impl WinitEngine {
-    pub fn new (logger: &Logger) -> Result<Self, Box<dyn Error>> {
-        debug!(logger, "Starting Winit engine");
-        Ok(Self {
-            logger:  logger.clone(),
-            running: Arc::new(AtomicBool::new(true)),
-            events:  EventLoop::try_new()?,
-            display: Display::new()?,
-            host:    WinitHost::new(logger)?,
-            inputs:  vec![],
-            outputs: vec![]
-        })
     }
 }
 

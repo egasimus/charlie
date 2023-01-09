@@ -16,11 +16,7 @@ pub struct Pointer {
 }
 
 impl Pointer {
-    pub fn new  (
-        engine: &mut impl Engine,
-        /*seat: &Seat<State>*/
-    ) -> Result<Self, Box<dyn Error>> {
-        //seat.add_pointer();
+    pub fn new <S> (engine: &mut impl Engine<S>) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
             logger:        engine.logger(),
             texture:       import_bitmap(engine.renderer(), "data/cursor.png")?,
@@ -41,8 +37,7 @@ impl Pointer {
         let visible = !matches!(*guard, Status::Surface(_));
         let hotspot = if let Status::Surface(ref surface) = *guard {
             with_states(surface, |states| {
-                states.data_map.get::<Mutex<Attributes>>().unwrap()
-                    .lock().unwrap().hotspot
+                states.data_map.get::<Mutex<Attributes>>().unwrap().lock().unwrap().hotspot
             })
         } else {
             (0, 0).into()
@@ -63,7 +58,6 @@ impl Pointer {
         let x = self.position.x + screen.center().x;
         let y = self.position.y + screen.center().y;
         let position = Point::<f64, Logical>::from((x, y)).to_physical(1.0).to_i32_round();
-        debug!(&self.logger, "Render pointer at {position:?} ({damage:?})");
         //let size = self.texture.size();
         Ok(frame.render_texture_at(
             &self.texture,
@@ -75,39 +69,6 @@ impl Pointer {
             1.0
         )?)
     }
-        //match *(self.status.lock().unwrap()) {
-            //Status::Hidden => vec![],
-            //Status::Default => {
-                //if let Some(texture) = self.texture.as_ref() {
-                    //frame.render_texture_from_to(
-                        //&self.texture, src, dst, damage, self.transform, self.alpha)
-                    //vec![
-                        //PointerRenderElement::<R>::from(TextureRenderElement::from_texture_buffer(
-                            //location.to_f64(),
-                            //texture,
-                            //None,
-                            //None,
-                            //None,
-                        //))
-                        //.into(),
-                    //]
-                //} else {
-                    //vec![]
-                //}
-            //}
-            //CursorImageStatus::Surface(surface) => {
-                //panic!();
-                ////let elements: Vec<PointerRenderElement<R>> =
-                    ////smithay::backend::renderer::element::surface::render_elements_from_surface_tree(
-                        ////renderer,
-                        ////surface,
-                        ////location,
-                        ////scale,
-                        ////None,
-                    ////);
-                ////elements.into_iter().map(E::from).collect()
-            //}
-        //};
 }
 
 pub struct MoveSurfaceGrab {
@@ -331,7 +292,7 @@ impl PointerGrab<State> for ResizeSurfaceGrab {
 /// It is stored inside of WlSurface,
 /// and can be accessed using [`ResizeSurfaceState::with`]
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum ResizeSurfaceState {
+pub(crate) enum ResizeSurfaceState {
     Idle,
     Resizing {
         edges: ResizeEdge,
@@ -353,10 +314,7 @@ impl Default for ResizeSurfaceState {
 }
 
 impl ResizeSurfaceState {
-    fn with<F, T>(surface: &WlSurface, cb: F) -> T
-    where
-        F: FnOnce(&mut Self) -> T,
-    {
+    pub fn with <T> (surface: &WlSurface, cb: impl FnOnce(&mut Self) -> T) -> T {
         compositor::with_states(surface, |states| {
             states.data_map.insert_if_missing(RefCell::<Self>::default);
             let state = states.data_map.get::<RefCell<Self>>().unwrap();
@@ -365,7 +323,7 @@ impl ResizeSurfaceState {
         })
     }
 
-    fn commit(&mut self) -> Option<(ResizeEdge, Rectangle<i32, Logical>)> {
+    pub fn commit(&mut self) -> Option<(ResizeEdge, Rectangle<i32, Logical>)> {
         match *self {
             Self::Resizing { edges, initial_rect } => Some((edges, initial_rect)),
             Self::WaitingForLastCommit { edges, initial_rect } => {
@@ -379,7 +337,7 @@ impl ResizeSurfaceState {
     }
 }
 
-fn check_grab(
+pub(crate) fn check_grab(
     seat: &Seat<State>,
     surface: &WlSurface,
     serial: Serial,

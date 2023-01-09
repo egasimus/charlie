@@ -21,7 +21,7 @@ pub trait Stoppable {
 
 }
 
-pub trait Engine: Stoppable + Sized {
+pub trait Engine<S>: Stoppable + Sized {
 
     fn init (self) -> Result<Self, Box<dyn Error>> {
         Ok(self)
@@ -33,8 +33,14 @@ pub trait Engine: Stoppable + Sized {
     /// Obtain a handle to the display.
     fn display_handle (&self) -> DisplayHandle;
 
+    /// Obtain a pollable file descriptor for the display.
+    fn display_fd (&self) -> i32;
+
+    /// Obtain a callable which dispatches display state to clients.
+    fn display_dispatcher (&self) -> Box<dyn Fn(&mut S) -> Result<usize, std::io::Error>>;
+
     /// Obtain a handle to the event loop.
-    fn event_handle (&self) -> LoopHandle<'static, State>;
+    fn event_handle (&self) -> LoopHandle<'static, S>;
 
     /// Obtain a mutable reference to the renderer.
     fn renderer (&mut self) -> &mut Gles2Renderer;

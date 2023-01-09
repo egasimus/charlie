@@ -19,7 +19,7 @@ pub struct XWaylandState {
 
 impl XWaylandState {
 
-    pub fn new (engine: &impl Engine) -> Result<Self, Box<dyn Error>> {
+    pub fn new (engine: &impl Engine<State>) -> Result<Self, Box<dyn Error>> {
         let logger  = engine.logger();
         let events  = engine.event_handle();
         let display = engine.display_handle();

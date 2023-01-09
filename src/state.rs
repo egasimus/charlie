@@ -1,17 +1,23 @@
 mod prelude;
+mod wayland;
 mod handle;
 mod pointer;
 mod xwayland;
 
 use self::prelude::*;
+use self::wayland::WaylandListener;
 use self::handle::DelegatedState;
 use self::pointer::Pointer;
 use self::xwayland::XWaylandState;
 
 pub struct State {
-    logger:        Logger,
+    logger:  Logger,
+    /// A wayland socket listener
+    wayland: WaylandListener,
+    /// A collection of views into the workspace, bound to engine outputs
     screens:       Vec<Screen>,
-    windows:       Vec<Window>,
+    /// State of the workspace containing the windows
+    pub space:     Space<Window>,
     /// State of the mouse pointer
     pub pointer:   Pointer,
     /// State of the X11 integration.
@@ -22,15 +28,13 @@ pub struct State {
 
 impl State {
 
-    pub fn new  (
-        engine:   &mut impl Engine,
-        xwayland: XWaylandState
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn new (engine: &mut impl Engine<Self>) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
             logger:    engine.logger(),
             screens:   vec![],
-            windows:   vec![],
+            space:     Space::new(engine.logger()),
             pointer:   Pointer::new(engine)?,
+            wayland:   WaylandListener::new(engine)?,
             xwayland:  XWaylandState::new(engine)?,
             delegated: DelegatedState::new(engine)?,
         })
@@ -81,15 +85,4 @@ impl Screen {
     pub fn center (&self) -> &Point<f64, Logical> {
         &self.center
     }
-    fn contains_rect (&self, window: &Window) -> bool {
-        false
-    }
-    fn contains_point (&self, point: Point<f64, Logical>) -> bool {
-        false
-    }
-}
-
-pub struct Window {
-    location: Point<f64, Logical>,
-    size:     Size<f64, Logical>
 }

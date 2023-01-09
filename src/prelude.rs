@@ -14,6 +14,8 @@ pub(crate) use std::collections::HashMap;
 
 pub(crate) use slog::{Logger, Drain, o, info, debug, warn, trace, error};
 
+pub(crate) use std::os::fd::{BorrowedFd, AsRawFd};
+
 pub(crate) use smithay::backend::renderer::gles2::{
     Gles2Renderer, 
     Gles2Frame,
@@ -25,7 +27,7 @@ pub(crate) use smithay::reexports::calloop::{EventLoop, LoopHandle};
 
 pub(crate) use smithay::reexports::wayland_server::{Display, DisplayHandle};
 
-pub(crate) use smithay::utils::{Size, Point, Logical, Physical};
+pub(crate) use smithay::utils::{Point, Size, Rectangle, Logical, Physical};
 
 pub(crate) fn init_log () -> (Logger, slog_scope::GlobalLoggerGuard) {
     // A logger facility, here we use the terminal here
@@ -45,7 +47,7 @@ pub(crate) fn init_log () -> (Logger, slog_scope::GlobalLoggerGuard) {
 
 pub(crate) use crate::engine::{Engine, Stoppable};
 
-pub(crate) use crate::state::{State, Screen, Window};
+pub(crate) use crate::state::{State, Screen};
 
 pub fn import_bitmap (renderer: &mut Gles2Renderer, path: impl AsRef<Path>)
     -> Result<Gles2Texture, Box<dyn Error>>
