@@ -39,11 +39,13 @@ use wayland_egl as wegl;
 /// Contains the main event loop, spawns one or more windows, and dispatches events to them.
 pub struct WinitHost {
     pub logger: Logger,
-    events:  WinitEventLoop<()>,
-    started: Option<Instant>,
-    egl:     EGLDisplay,
-    damage:  bool,
-    windows: HashMap<WindowId, WinitHostWindow>
+    events:      WinitEventLoop<()>,
+    started:     Option<Instant>,
+    egl_display: EGLDisplay,
+    egl_context: EGLContext,
+    renderer:    Gles2Renderer,
+    damage:      bool,
+    windows:     HashMap<WindowId, WinitHostWindow>
 }
 
 impl WinitHost {
@@ -51,31 +53,48 @@ impl WinitHost {
     pub fn new (logger: &Logger) -> Result<Self, Box<dyn Error>> {
         debug!(logger, "Initializing Winit event loop");
         let events = WinitEventLoop::new();
-        // Null window to host the EGLDisplay
-        let window = Arc::new(WindowBuilder::new()
+        let window = Arc::new(WindowBuilder::new() // Null window to host the EGLDisplay
             .with_inner_size(LogicalSize::new(16, 16))
             .with_title("Charlie Null")
             .with_visible(false)
             .build(&events)
             .map_err(WinitError::InitFailed)?);
-        let egl = EGLDisplay::new(window, logger.clone()).unwrap();
-        let damage = egl.supports_damage();
+        let egl_display = EGLDisplay::new(window, logger.clone()).unwrap();
+        let egl_context = EGLContext::new_with_config(&egl_display, GlAttributes {
+            version: (3, 0), profile: None, vsync: true, debug: cfg!(debug_assertions),
+        }, Default::default(), logger.clone())?;
         Ok(Self {
             logger:  logger.clone(),
             events,
-            egl,
-            damage,
+            damage: egl_display.supports_damage(),
+            egl_display,
+            renderer: Self::make_renderer(logger, &egl_context)?,
+            egl_context,
             started: None,
             windows: HashMap::new()
         })
     }
 
+    fn make_context (logger: &Logger, egl: &EGLContext) -> Result<EGLContext, Box<dyn Error>> {
+        Ok(EGLContext::new_shared_with_config(egl.display(), egl, GlAttributes {
+            version: (3, 0), profile: None, vsync: true, debug: cfg!(debug_assertions),
+        }, Default::default(), logger.clone())?)
+    }
+
+    fn make_renderer (logger: &Logger, egl: &EGLContext) -> Result<Gles2Renderer, Box<dyn Error>> {
+        let egl = Self::make_context(logger, egl)?;
+        Ok(unsafe { Gles2Renderer::new(egl, logger.clone()) }?)
+    }
+
+    pub fn renderer (&mut self) -> &mut Gles2Renderer {
+        &mut self.renderer
+    }
+
     pub fn window_add (
         &mut self, display: &Display<State>, title: &str, width: f64, height: f64
     ) -> Result<&mut WinitHostWindow, Box<dyn Error>> {
-        let window = WinitHostWindow::new(
-            &self.logger, &self.events, display, &self.egl, title, width, height
-        )?;
+        let egl = Self::make_context(&self.logger, &self.egl_context)?;
+        let window = WinitHostWindow::new(&self.logger, &self.events, &egl, title, width, height)?;
         let window_id = window.id();
         self.windows.insert(window_id, window);
         Ok(self.window_get(&window_id))
@@ -83,6 +102,14 @@ impl WinitHost {
 
     pub fn window_get (&mut self, window_id: &WindowId) -> &mut WinitHostWindow {
         self.windows.get_mut(&window_id).unwrap()
+    }
+
+    pub fn window_render (
+        &mut self,
+        window_id: &WindowId,
+        render: &impl Fn(&mut Gles2Frame, Size<i32, Physical>)->Result<(), Box<dyn Error>>
+    ) -> Result<(), Box<dyn Error>> {
+        self.windows.get_mut(&window_id).unwrap().render(&mut self.renderer, render)
     }
 
     pub fn dispatch (&mut self, mut callback: impl FnMut(WinitEvent))
@@ -132,20 +159,17 @@ pub enum WinitHostError {
 }
 
 pub struct WinitHostWindow {
-    logger:        Logger,
-    title:         String,
-    width:         f64,
-    height:        f64,
-    window:        Arc<WinitWindow>,
-    closing:       bool,
-    rollover:      u32,
-    renderer:      Gles2Renderer,
-    surface:       Rc<EGLSurface>,
-    resized:       Rc<Cell<Option<Size<i32, Physical>>>>,
-    size:          Rc<RefCell<WindowSize>>,
-    is_x11:        bool,
-    //dmabuf_state:  DmabufState,
-    //dmabuf_global: DmabufGlobal
+    logger:   Logger,
+    title:    String,
+    width:    f64,
+    height:   f64,
+    window:   Arc<WinitWindow>,
+    closing:  bool,
+    rollover: u32,
+    surface:  Rc<EGLSurface>,
+    resized:  Rc<Cell<Option<Size<i32, Physical>>>>,
+    size:     Rc<RefCell<WindowSize>>,
+    is_x11:   bool,
 }
 
 impl WinitHostWindow {
@@ -153,14 +177,13 @@ impl WinitHostWindow {
     pub fn new (
         logger:  &Logger,
         events:  &WinitEventLoop<()>,
-        display: &Display<State>,
-        egl:     &EGLDisplay,
+        egl:     &EGLContext,
         title:   &str,
         width:   f64,
         height:  f64
     ) -> Result<Self, Box<dyn Error>> {
-        let (window_id, window) = Self::window_build(logger, events, title, width, height)?;
-        let (surface, renderer, is_x11) = Self::window_setup(logger, display, egl, &window)?;
+        let (window_id, window) = Self::build(logger, events, title, width, height)?;
+        let surface = Self::surface(logger, egl, &window)?;
         Ok(Self {
             logger:   logger.clone(),
             title:    title.into(),
@@ -173,19 +196,16 @@ impl WinitHostWindow {
                     scale_factor: window.scale_factor(),
                 }))
             },
-            resized: Rc::new(Cell::new(None)),
+            resized:  Rc::new(Cell::new(None)),
+            is_x11:   window.wayland_surface().is_none(),
             width,
             height,
             window,
             surface,
-            renderer,
-            is_x11,
-            //dmabuf_state,
-            //dmabuf_global,
         })
     }
 
-    fn window_build (
+    fn build (
         logger: &Logger,
         events: &WinitEventLoop<()>,
         title:  &str,
@@ -204,52 +224,36 @@ impl WinitHostWindow {
         Ok((window_id, window))
     }
 
-    fn window_setup (
-        logger:  &Logger,
-        display: &Display<State>,
-        egl:     &EGLDisplay,
-        window:  &WinitWindow
-    ) -> Result<(Rc<EGLSurface>, Gles2Renderer, bool), Box<dyn Error>> {
+    fn surface (
+        logger: &Logger,
+        egl:    &EGLContext,
+        window: &WinitWindow
+    ) -> Result<Rc<EGLSurface>, Box<dyn Error>> {
         debug!(logger, "Setting up Winit window: {window:?}");
-        let gl_attributes = GlAttributes {
-            version: (3, 0), profile: None, vsync: true, debug: cfg!(debug_assertions),
-        };
-        let context = EGLContext::new_with_config(
-            egl, gl_attributes, Default::default(), logger.clone()
-        )?;
         debug!(logger, "Created EGL context for Winit window");
         let is_x11 = !window.wayland_surface().is_some();
         let surface = if let Some(surface) = window.wayland_surface() {
-            Self::window_setup_wl(logger, egl, &context, window.inner_size().into(), surface)?
+            Self::window_setup_wl(logger, &egl, window.inner_size().into(), surface)?
         } else if let Some(xlib_window) = window.xlib_window().map(XlibWindow) {
-            Self::window_setup_x11(logger, egl, &context, xlib_window)?
+            Self::window_setup_x11(logger, &egl, xlib_window)?
         } else {
             unreachable!("No backends for winit other then Wayland and X11 are supported")
         };
-        let _ = context.unbind()?;
-        let mut renderer = unsafe { Gles2Renderer::new(context, logger.clone())? };
-        renderer.bind_wl_display(&display.handle())?; // not here?
-
-        //let dmabuf_formats = renderer.dmabuf_formats().cloned().collect::<Vec<_>>();
-        //let mut dmabuf_state = DmabufState::new();
-        //let dmabuf_global = dmabuf_state.create_global::<WinitHostWindow, _>(
-            //&display.handle(), dmabuf_formats, self.logger.clone(),
-        //);
-        Ok((Rc::new(surface), renderer, is_x11))
+        let _ = egl.unbind()?;
+        Ok(Rc::new(surface))
     }
 
     fn window_setup_wl (
         logger:          &Logger,
-        egl_display:     &EGLDisplay,
-        egl_context:     &EGLContext,
+        egl:             &EGLContext,
         (width, height): (i32, i32),
         surface:         *mut std::os::raw::c_void
     ) -> Result<EGLSurface, Box<dyn Error>> {
         debug!(logger, "Using Wayland backend for Winit window");
         Ok(EGLSurface::new(
-            egl_display,
-            egl_context.pixel_format().unwrap(),
-            egl_context.config_id(),
+            egl.display(),
+            egl.pixel_format().unwrap(),
+            egl.config_id(),
             unsafe {
                 wegl::WlEglSurface::new_from_raw(surface as *mut _, width, height)
             }.map_err(|err| WinitError::Surface(err.into()))?,
@@ -258,16 +262,15 @@ impl WinitHostWindow {
     }
 
     fn window_setup_x11 (
-        logger:      &Logger,
-        egl_display: &EGLDisplay,
-        egl_context: &EGLContext,
-        window:      XlibWindow
+        logger: &Logger,
+        egl:    &EGLContext,
+        window: XlibWindow
     ) -> Result<EGLSurface, Box<dyn Error>> {
         debug!(logger, "Using X11 backend for Winit window {window:?}");
         Ok(EGLSurface::new(
-            egl_display,
-            egl_context.pixel_format().unwrap(),
-            egl_context.config_id(),
+            egl.display(),
+            egl.pixel_format().unwrap(),
+            egl.config_id(),
             window,
             logger.clone(),
         ).map_err(EGLError::CreationFailed)?)
@@ -279,14 +282,15 @@ impl WinitHostWindow {
 
     pub fn render (
         &mut self,
+        renderer: &mut Gles2Renderer,
         render: impl Fn(&mut Gles2Frame, Size<i32, Physical>)->Result<(), Box<dyn Error>>
     ) -> Result<(), Box<dyn Error>> {
-        self.renderer.bind(self.surface.clone())?;
+        renderer.bind(self.surface.clone())?;
         if let Some(size) = self.resized.take() {
             self.surface.resize(size.w, size.h, 0, 0);
         }
         let size = self.surface.get_size().unwrap();
-        let mut frame = self.renderer.render(size, Transform::Normal)?;
+        let mut frame = renderer.render(size, Transform::Normal)?;
         render(&mut frame, size)?;
         frame.finish()?;
         self.surface.swap_buffers(None)?;

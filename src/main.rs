@@ -2,8 +2,9 @@
 
 mod prelude;
 mod engine;
-mod state;
 mod xwayland;
+mod state;
+mod pointer;
 //mod backend;
 //mod app;
 //mod compositor;
@@ -20,8 +21,9 @@ fn main () -> Result<(), Box<dyn Error>> {
     let (logger, _guard) = init_log();
     let mut engine = WinitEngine::new(&logger)?;
     let xwayland = XWaylandState::new(&logger, engine.event_handle(), &engine.display_handle())?;
+    let mut state = State::new(&logger, &mut engine, xwayland)?;
     engine.output_add("Alice")?;
     engine.output_add("Bob")?;
-    engine.start(&mut State::new(&logger, xwayland));
+    engine.start(&mut state);
     Ok(())
 }

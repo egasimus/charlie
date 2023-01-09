@@ -3,7 +3,7 @@ use crate::prelude::*;
 pub(crate) mod udev;
 pub(crate) mod winit;
 
-pub(crate) trait Stoppable {
+pub trait Stoppable {
 
     fn running (&self) -> &Arc<AtomicBool>;
 
@@ -21,15 +21,21 @@ pub(crate) trait Stoppable {
 
 }
 
-pub(crate) trait Engine: Stoppable + Sized {
+pub trait Engine: Stoppable + Sized {
 
     fn init (self) -> Result<Self, Box<dyn Error>> {
         Ok(self)
     }
 
+    fn logger (&self) -> Logger;
+
     fn display_handle (&self) -> DisplayHandle;
 
     fn event_handle (&self) -> LoopHandle<'static, State>;
+
+    fn renderer (&mut self) -> &mut Gles2Renderer {
+        unimplemented!();
+    }
 
     fn output_add (&mut self, name: &str) -> Result<(), Box<dyn Error>> {
         unimplemented!();
