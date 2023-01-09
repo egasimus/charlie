@@ -1,3 +1,8 @@
+pub(crate) use crate::{
+    traits::*,
+    state::{State, Screen}
+};
+
 pub(crate) use std::error::Error;
 
 pub(crate) use std::rc::Rc;
@@ -14,18 +19,29 @@ pub(crate) use std::collections::HashMap;
 
 pub(crate) use slog::{Logger, Drain, o, info, debug, warn, trace, error, crit};
 
-pub(crate) use std::os::fd::{BorrowedFd, AsRawFd};
+pub(crate) use std::os::fd::AsRawFd;
 
-pub(crate) use smithay::backend::renderer::{
-    Renderer,
-    element::surface::WaylandSurfaceRenderElement,
-    damage::DamageTrackedRenderer,
-    gles2::{
-        Gles2Renderer, 
-        Gles2Frame,
-        Gles2Texture,
-        Gles2Error
+pub(crate) use smithay::backend::{
+    input::{
+        InputBackend,
+        InputEvent,
     },
+    renderer::{
+        Renderer,
+        Frame,
+        element::{
+            Element,
+            RenderElement,
+            surface::WaylandSurfaceRenderElement
+        },
+        damage::DamageTrackedRenderer,
+        gles2::{
+            Gles2Renderer, 
+            Gles2Frame,
+            Gles2Texture,
+            Gles2Error
+        },
+    }
 };
 
 pub(crate) use smithay::output::Output;
@@ -51,10 +67,6 @@ pub(crate) fn init_log () -> (Logger, slog_scope::GlobalLoggerGuard) {
     debug!(&log, "Logger initialized");
     (log, _guard)
 }
-
-pub(crate) use crate::engine::{Engine, Stoppable};
-
-pub(crate) use crate::state::{State, Screen};
 
 pub fn import_bitmap (renderer: &mut Gles2Renderer, path: impl AsRef<Path>)
     -> Result<Gles2Texture, Box<dyn Error>>

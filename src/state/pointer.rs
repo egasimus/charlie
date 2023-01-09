@@ -16,7 +16,7 @@ pub struct Pointer {
 }
 
 impl Pointer {
-    pub fn new <S> (engine: &mut impl Engine<S>) -> Result<Self, Box<dyn Error>> {
+    pub fn new (engine: &mut impl Engine<State>) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
             logger:        engine.logger(),
             texture:       import_bitmap(engine.renderer(), "data/cursor.png")?,

@@ -23,7 +23,9 @@ pub struct State {
     /// State of the X11 integration.
     pub xwayland:  XWaylandState,
     /// States of smithay-provided implementations of compositor features
-    pub delegated: DelegatedState
+    pub delegated: DelegatedState,
+    /// Commands to run after successful initialization
+    startup: Vec<(String, Vec<String>)>,
 }
 
 impl State {
@@ -37,48 +39,67 @@ impl State {
             wayland:   WaylandListener::new(engine)?,
             xwayland:  XWaylandState::new(engine)?,
             delegated: DelegatedState::new(engine)?,
+            startup:   vec![],
         })
-    }
-
-    pub fn render (
-        &self,
-        renderer: &mut Gles2Renderer,
-        damage:   &mut DamageTrackedRenderer,
-        size:     Size<i32, Physical>,
-        output:   &Output,
-        screen:   usize
-    ) -> Result<(), Box<dyn Error>> {
-        let rect: Rectangle<i32, Physical> = Rectangle::from_loc_and_size((0, 0), size);
-        use smithay::desktop::space::space_render_elements;
-        let screen = &self.screens[screen];
-        let clear_color = [0.2,0.3,0.4,1.0];
-        let elements = space_render_elements(renderer, [&self.space], output)?;
-        damage.render_output(renderer, 0, &elements, clear_color, self.logger.clone())?;
-        //let mut frame = renderer.render(size, Transform::Normal)?;
-        //frame.clear(clear_color, &[rect])?;
-        //self.pointer.render(&mut frame, size, screen)?;
-        //frame.finish()?;
-        //self
-        //for screen in self.screens.iter() {
-            //for window in self.windows.iter() {
-                //if screen.contains_rect(window) {
-                    ////engine.render_window(screen, window)?;
-                //}
-            //}
-            ////if screen.contains_point(self.pointer) {
-                ////engine.render_pointer(screen, &self.pointer)?;
-            ////}
-        //}
-        Ok(())
-    }
-
-    pub fn on_input <B: InputBackend> (&mut self, event: InputEvent<B>) {
-        debug!(self.logger, "Received input event")
     }
 
     pub fn screen_add (&mut self, screen: Screen) -> usize {
         self.screens.push(screen);
         self.screens.len() - 1
+    }
+
+    pub fn startup_add (&mut self, command: &str, args: &[&str]) -> usize {
+        self.startup.push((
+            String::from(command),
+            args.iter().map(|arg|String::from(*arg)).collect()
+        ));
+        self.startup.len() - 1
+    }
+
+}
+
+type ScreenId = usize;
+
+impl<'a> Widget for State {
+
+    type RenderData = ScreenId;
+
+    fn init (&mut self) -> Result<(), Box<dyn Error>> {
+        println!("DISPLAY={:?}", ::std::env::var("DISPLAY"));
+        println!("WAYLAND_DISPLAY={:?}", ::std::env::var("WAYLAND_DISPLAY"));
+        println!("{:?}", self.startup);
+        for (cmd, args) in self.startup.iter() {
+            debug!(self.logger, "Spawning {cmd} {args:?}");
+            std::process::Command::new(cmd).args(args).spawn()?;
+        }
+        Ok(())
+    }
+
+    fn render <'r> (&'r self, context: RenderContext<'r, ScreenId>) -> Result<(), Box<dyn Error>> {
+        let RenderContext { renderer, output, data: screen } = context;
+        let size      = output.current_mode().unwrap().size;
+        let transform = output.current_transform();
+        let scale     = output.current_scale();
+        let rect: Rectangle<i32, Physical> = Rectangle::from_loc_and_size((0, 0), size);
+        use smithay::desktop::space::space_render_elements;
+        let screen = &self.screens[screen];
+        let elements = space_render_elements(renderer, [&self.space], output)?;
+        let mut frame = renderer.render(size, transform)?;
+        frame.clear([0.2,0.3,0.4,1.0], &[rect]);
+        for (mut z_index, element) in elements.iter().rev().enumerate() {
+            // This is necessary because we reversed the render elements to draw
+            // them back to front, but z-index including opaque regions is defined
+            // front to back
+            z_index = elements.len() - 1 - z_index;
+            let element_geometry = element.geometry(scale.fractional_scale().into());
+            element.draw(&mut frame, element.src(), element_geometry, &[element_geometry], &self.logger)?;
+        }
+        frame.finish();
+        Ok(())
+    }
+
+    fn handle <B: InputBackend> (&mut self, event: InputEvent<B>) {
+        debug!(self.logger, "Received input event")
     }
 
 }

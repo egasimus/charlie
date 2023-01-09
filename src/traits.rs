@@ -1,7 +1,24 @@
 use crate::prelude::*;
 
-pub(crate) mod udev;
-pub(crate) mod winit;
+pub trait Widget {
+
+    type RenderData;
+
+    fn init (&mut self) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
+
+    fn render <'r> (&'r self, context: RenderContext<'r, Self::RenderData>) -> Result<(), Box<dyn Error>>;
+
+    fn handle <B: InputBackend> (&mut self, event: InputEvent<B>);
+
+}
+
+pub struct RenderContext<'a, D> {
+    pub renderer: &'a mut Gles2Renderer,
+    pub output:   &'a Output,
+    pub data:     D
+}
 
 pub trait Stoppable {
 
@@ -10,18 +27,16 @@ pub trait Stoppable {
     fn is_running (&self) -> bool {
         self.running().load(Ordering::SeqCst)
     }
-
     fn start_running (&self) {
         self.running().store(true, Ordering::SeqCst)
     }
-
     fn stop_running (&self) {
         self.running().store(false, Ordering::SeqCst)
     }
 
 }
 
-pub trait Engine<S>: Stoppable + Sized {
+pub trait Engine<W: Widget>: Stoppable + Sized {
 
     fn init (self) -> Result<Self, Box<dyn Error>> {
         Ok(self)
@@ -37,10 +52,10 @@ pub trait Engine<S>: Stoppable + Sized {
     fn display_fd (&self) -> i32;
 
     /// Obtain a callable which dispatches display state to clients.
-    fn display_dispatcher (&self) -> Box<dyn Fn(&mut S) -> Result<usize, std::io::Error>>;
+    fn display_dispatcher (&self) -> Box<dyn Fn(&mut W) -> Result<usize, std::io::Error>>;
 
     /// Obtain a handle to the event loop.
-    fn event_handle (&self) -> LoopHandle<'static, S>;
+    fn event_handle (&self) -> LoopHandle<'static, W>;
 
     /// Obtain a mutable reference to the renderer.
     fn renderer (&mut self) -> &mut Gles2Renderer;
@@ -68,17 +83,25 @@ pub trait Engine<S>: Stoppable + Sized {
         unimplemented!();
     }
 
-    fn dispatch (&mut self, state: &mut State) -> Result<(), Box<dyn Error>> {
-        unimplemented!();
+    fn start (&mut self, app: &mut W) -> Result<(), Box<dyn Error>> {
+        app.init()?;
+        self.start_running();
+        while self.is_running() {
+            if self.dispatch(app).is_err() {
+                self.stop_running();
+                break
+            }
+            self.tick(app)?;
+        }
+        Ok(())
     }
 
-    fn start (&mut self, app: &mut State) {
-        unimplemented!{};
-    }
+    fn dispatch (&mut self, state: &mut W) -> Result<(), Box<dyn Error>>;
 
-    fn tick (&mut self, state: &mut State) {
-        unimplemented!{};
-    }
+    fn tick (&mut self, state: &mut W) -> Result<(), Box<dyn Error>>;
 
 }
 
+// TODO:
+// fn render (self, renderer, area) -> RenderResult
+// struct RenderResult { used, damages }

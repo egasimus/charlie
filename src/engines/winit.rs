@@ -10,10 +10,7 @@ use smithay::backend::{
         context::GlAttributes,
         display::EGLDisplay
     },
-    renderer::{
-        Bind, Renderer, Frame,
-        gles2::{Gles2Renderer, Gles2Frame},
-    },
+    renderer::{Bind, Renderer, Frame},
     winit::{
         Error as WinitError, WindowSize, WinitVirtualDevice, WinitEvent,
         WinitKeyboardInputEvent,
@@ -31,34 +28,25 @@ use smithay::reexports::winit::{
     window::{WindowId, WindowBuilder, Window as WinitWindow},
 };
 
-use smithay::utils::{Rectangle, Transform};
-
-//use smithay::{
-    //delegate_dmabuf,
-    //backend::allocator::dmabuf::Dmabuf,
-    //reexports::wayland_server::protocol::{
-        //wl_buffer::WlBuffer,
-        //wl_surface::WlSurface
-    //},
-    //wayland::{
-        //buffer::BufferHandler,
-        //dmabuf::{DmabufHandler, DmabufState, DmabufGlobal, ImportError}
-    //}
-//};
-
 use wayland_egl as wegl;
 
-pub struct WinitEngine<S: 'static> {
+pub struct WinitEngine<W: 'static> {
     logger:  Logger,
     running: Arc<AtomicBool>,
-    events:  EventLoop<'static, S>,
-    display: Rc<RefCell<Display<S>>>,
+    events:  EventLoop<'static, W>,
+    display: Rc<RefCell<Display<W>>>,
     host:    WinitHost,
     outputs: Vec<WinitOutput>,
     inputs:  Vec<WinitInput>
 }
 
-impl<S> WinitEngine<S> {
+impl<W> Stoppable for WinitEngine<W> {
+    fn running (&self) -> &Arc<AtomicBool> {
+        &self.running
+    }
+}
+
+impl<W: Widget + 'static> WinitEngine<W> {
     pub fn new (logger: &Logger) -> Result<Self, Box<dyn Error>> {
         debug!(logger, "Starting Winit engine");
         Ok(Self {
@@ -73,13 +61,9 @@ impl<S> WinitEngine<S> {
     }
 }
 
-impl<S> Stoppable for WinitEngine<S> {
-    fn running (&self) -> &Arc<AtomicBool> {
-        &self.running
-    }
-}
+type ScreenId = usize;
 
-impl<S> Engine<S> for WinitEngine<S> {
+impl<W: Widget<RenderData=usize>> Engine<W> for WinitEngine<W> {
     fn logger (&self) -> Logger {
         self.logger.clone()
     }
@@ -89,47 +73,43 @@ impl<S> Engine<S> for WinitEngine<S> {
     fn display_fd (&self) -> i32 {
         self.display.borrow_mut().backend().poll_fd().as_raw_fd()
     }
-    fn display_dispatcher (&self) -> Box<dyn Fn(&mut S) -> Result<usize, std::io::Error>> {
+    fn display_dispatcher (&self) -> Box<dyn Fn(&mut W) -> Result<usize, std::io::Error>> {
         let display = self.display.clone();
         Box::new(move |state| { display.borrow_mut().dispatch_clients(state) })
     }
-    fn event_handle (&self) -> LoopHandle<'static, S> {
+    fn event_handle (&self) -> LoopHandle<'static, W> {
         self.events.handle()
     }
     fn renderer (&mut self) -> &mut Gles2Renderer {
         self.host.renderer()
     }
-    fn output_add (&mut self, name: &str, screen: usize) -> Result<(), Box<dyn Error>> {
+    fn output_add (&mut self, name: &str, screen: ScreenId) -> Result<(), Box<dyn Error>> {
         Ok(self.outputs.push(WinitOutput::new(name, &mut self.host, screen)?))
     }
     fn input_add (&mut self) -> Result<(), Box<dyn Error>> {
         self.inputs.push(WinitInput {});
         unimplemented!();
     }
-    fn start (&mut self, state: &mut State) {
-        self.start_running();
-        while self.is_running() {
-            if self.host.dispatch(|/*window_id,*/ event| match event {
-                WinitEvent::Resized { size, scale_factor } => {
-                    //panic!("host resize unsupported");
-                }
-                WinitEvent::Input(event) => {
-                    state.on_input(event)
-                }
-                _ => (),
-            }).is_err() {
-                self.stop_running();
-                break
+    fn dispatch (&mut self, state: &mut W) -> Result<(), Box<dyn Error>> {
+        Ok(self.host.dispatch(|/*window_id,*/ event| match event {
+            WinitEvent::Resized { size, scale_factor } => {
+                //panic!("host resize unsupported");
             }
-            for output in self.outputs.iter_mut() {
-                debug!(self.logger, "{output:?}");
-                if let Err(err) = output.render(&mut self.host, state) {
-                    crit!(self.logger, "{err}");
-                    self.stop_running();
-                    break
-                }
+            WinitEvent::Input(event) => {
+                state.handle(event)
+            }
+            _ => (),
+        })?)
+    }
+    fn tick (&mut self, state: &mut W) -> Result<(), Box<dyn Error>> {
+        for output in self.outputs.iter_mut() {
+            if let Err(err) = output.render(&mut self.host, state) {
+                crit!(self.logger, "{err}");
+                self.stop_running();
+                return Err(err)
             }
         }
+        Ok(())
     }
 }
 
@@ -141,7 +121,7 @@ pub struct WinitOutput {
     /// Which host window contains this output
     host_window_id: WindowId,
     /// Which screen is shown on this output
-    screen:         usize,
+    screen:         ScreenId,
     /// The output
     output:         Output,
     /// Damage tracking
@@ -154,7 +134,7 @@ impl WinitOutput {
     fn new (
         name:   &str,
         host:   &mut WinitHost,
-        screen: usize,
+        screen: ScreenId,
     ) -> Result<Self, Box<dyn Error>> {
         let w = 720;
         let h = 540;
@@ -179,17 +159,18 @@ impl WinitOutput {
         })
     }
 
-    fn render (&mut self, host: &mut WinitHost, state: &mut State)
-        -> Result<(), Box<dyn Error>>
-    {
+    /// Render this output into its corresponding host window
+    fn render (
+        &mut self,
+        host:  &mut WinitHost,
+        state: &mut impl Widget<RenderData=ScreenId>
+    ) -> Result<(), Box<dyn Error>> {
         host.window_render(&self.host_window_id, &mut |renderer, size|{
-            state.render(
+            state.render(RenderContext {
+                output: &self.output,
+                data:   self.screen,
                 renderer,
-                &mut self.damage,
-                size,
-                &self.output,
-                self.screen
-            )
+            })
         })
     }
 
@@ -314,10 +295,6 @@ impl WinitHost {
         }
     }
 
-}
-
-pub enum WinitHostError {
-    WindowClosed,
 }
 
 pub struct WinitHostWindow {
@@ -586,6 +563,32 @@ impl WinitHostWindow {
     }
 
 }
+
+#[derive(Debug)]
+pub enum WinitHostError {
+    WindowClosed,
+}
+
+impl std::fmt::Display for WinitHostError {
+    fn fmt (&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self, f)
+    }
+}
+
+impl std::error::Error for WinitHostError {}
+
+//use smithay::{
+    //delegate_dmabuf,
+    //backend::allocator::dmabuf::Dmabuf,
+    //reexports::wayland_server::protocol::{
+        //wl_buffer::WlBuffer,
+        //wl_surface::WlSurface
+    //},
+    //wayland::{
+        //buffer::BufferHandler,
+        //dmabuf::{DmabufHandler, DmabufState, DmabufGlobal, ImportError}
+    //}
+//};
 
 //impl BufferHandler for WinitHostWindow {
     //fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}

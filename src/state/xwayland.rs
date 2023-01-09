@@ -41,7 +41,10 @@ impl XWaylandState {
     }
 
     pub fn connect (
-        &mut self, display: &DisplayHandle, connection: UnixStream, client: Client
+        &mut self,
+        display:    &DisplayHandle,
+        connection: UnixStream,
+        client:     Client
     ) -> Result<(), Box<dyn Error>> {
         let logger = &self.logger;
         let events = &self.events;
@@ -72,6 +75,7 @@ impl XWaylandConnection {
         connection: UnixStream,
         client:     Client
     ) -> Result<Self, Box<dyn Error>> {
+        debug!(logger, "New X11 connection");
         let screen = 0; // Create an X11 connection. XWaylandState only uses screen 0.
         let stream = DefaultStream::from_unix_stream(connection)?;
         let conn   = RustConnection::connect_to_stream(stream, screen)?;

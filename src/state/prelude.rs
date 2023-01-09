@@ -7,16 +7,7 @@ pub(crate) use smithay::{
     delegate_seat,
     delegate_shm,
     delegate_xdg_shell,
-    backend::{
-        input::{
-            InputBackend,
-            InputEvent,
-        },
-        renderer::{
-            Frame,
-            utils::on_commit_buffer_handler
-        }
-    },
+    backend::renderer::utils::on_commit_buffer_handler,
     input::{
         Seat,
         SeatHandler,
@@ -33,7 +24,6 @@ pub(crate) use smithay::{
     },
     reexports::{
         wayland_protocols::xdg::shell::server::xdg_toplevel::{
-            self,
             State      as XdgToplevelState,
             ResizeEdge as XdgToplevelResizeEdge
         },

@@ -1,26 +1,21 @@
-#![feature(int_roundings)]
+#![feature(int_roundings, anonymous_lifetime_in_impl_trait)]
 
 mod prelude;
-mod engine;
+mod traits;
+mod engines;
 mod state;
-//mod backend;
-//mod app;
-//mod compositor;
-//mod controller;
-//mod workspace;
 
 use crate::prelude::*;
-use crate::engine::winit::WinitEngine;
+use crate::engines::winit::WinitEngine;
 use crate::state::Screen;
-//use crate::app::App;
-//use crate::backend::{Engine, Winit, Udev};
 
 fn main () -> Result<(), Box<dyn Error>> {
     let (logger, _guard) = init_log();
     let mut engine = WinitEngine::new(&logger)?;
     let mut state  = State::new(&mut engine)?;
+    state.startup_add("glxgears", &[]);
+    state.startup_add("wezterm",  &[]);
     engine.output_add("Alice", state.screen_add(Screen::new((-100.0, 0.0), (0.0, 0.0))))?;
     engine.output_add("Bob",   state.screen_add(Screen::new(( 100.0, 0.0), (0.0, 0.0))))?;
-    engine.start(&mut state);
-    Ok(())
+    engine.start(&mut state)
 }
