@@ -28,6 +28,7 @@ impl WaylandListener {
                 Ok(PostAction::Continue)
             }
         )?;
+        ::std::env::set_var("WAYLAND_DISPLAY", &name);
         Ok(Self(name))
     }
 }

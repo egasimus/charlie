@@ -1400,10 +1400,7 @@ impl WindowMap {
                     result = Err(err);
                 }
                 // furthermore, draw its popups
-                let toplevel_geometry_offset = self
-                    .geometry(toplevel_surface)
-                    .map(|g| g.loc)
-                    .unwrap_or_default();
+                let toplevel_geometry_offset = self.geometry(toplevel_surface).map(|g| g.loc).unwrap_or_default();
                 self.with_child_popups(&wl_surface, |popup| {
                     let location = popup.location();
                     let draw_location = initial_place + location + toplevel_geometry_offset;

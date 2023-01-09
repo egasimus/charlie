@@ -12,16 +12,23 @@ pub(crate) use std::path::Path;
 
 pub(crate) use std::collections::HashMap;
 
-pub(crate) use slog::{Logger, Drain, o, info, debug, warn, trace, error};
+pub(crate) use slog::{Logger, Drain, o, info, debug, warn, trace, error, crit};
 
 pub(crate) use std::os::fd::{BorrowedFd, AsRawFd};
 
-pub(crate) use smithay::backend::renderer::gles2::{
-    Gles2Renderer, 
-    Gles2Frame,
-    Gles2Texture,
-    Gles2Error
+pub(crate) use smithay::backend::renderer::{
+    Renderer,
+    element::surface::WaylandSurfaceRenderElement,
+    damage::DamageTrackedRenderer,
+    gles2::{
+        Gles2Renderer, 
+        Gles2Frame,
+        Gles2Texture,
+        Gles2Error
+    },
 };
+
+pub(crate) use smithay::output::Output;
 
 pub(crate) use smithay::reexports::calloop::{EventLoop, LoopHandle};
 

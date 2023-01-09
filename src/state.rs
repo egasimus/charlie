@@ -15,7 +15,7 @@ pub struct State {
     /// A wayland socket listener
     wayland: WaylandListener,
     /// A collection of views into the workspace, bound to engine outputs
-    screens:       Vec<Screen>,
+    screens: Vec<Screen>,
     /// State of the workspace containing the windows
     pub space:     Space<Window>,
     /// State of the mouse pointer
@@ -41,10 +41,24 @@ impl State {
     }
 
     pub fn render (
-        &self, frame: &mut Gles2Frame, size: Size<i32, Physical>, screen: usize
+        &self,
+        renderer: &mut Gles2Renderer,
+        damage:   &mut DamageTrackedRenderer,
+        size:     Size<i32, Physical>,
+        output:   &Output,
+        screen:   usize
     ) -> Result<(), Box<dyn Error>> {
+        let rect: Rectangle<i32, Physical> = Rectangle::from_loc_and_size((0, 0), size);
+        use smithay::desktop::space::space_render_elements;
         let screen = &self.screens[screen];
-        self.pointer.render(frame, size, screen)?;
+        let clear_color = [0.2,0.3,0.4,1.0];
+        let elements = space_render_elements(renderer, [&self.space], output)?;
+        damage.render_output(renderer, 0, &elements, clear_color, self.logger.clone())?;
+        //let mut frame = renderer.render(size, Transform::Normal)?;
+        //frame.clear(clear_color, &[rect])?;
+        //self.pointer.render(&mut frame, size, screen)?;
+        //frame.finish()?;
+        //self
         //for screen in self.screens.iter() {
             //for window in self.windows.iter() {
                 //if screen.contains_rect(window) {
