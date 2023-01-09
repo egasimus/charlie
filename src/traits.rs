@@ -4,11 +4,16 @@ pub trait Widget {
 
     type RenderData;
 
-    fn init (&mut self) -> Result<(), Box<dyn Error>> {
+    fn prepare (&mut self) -> Result<(), Box<dyn Error>> {
         Ok(())
     }
 
-    fn render <'r> (&'r self, context: RenderContext<'r, Self::RenderData>) -> Result<(), Box<dyn Error>>;
+    fn render <'r> (&'r self, context: RenderContext<'r, Self::RenderData>)
+        -> Result<(), Box<dyn Error>>;
+
+    fn refresh (&mut self) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
 
     fn handle <B: InputBackend> (&mut self, event: InputEvent<B>);
 
@@ -84,19 +89,17 @@ pub trait Engine<W: Widget>: Stoppable + Sized {
     }
 
     fn start (&mut self, app: &mut W) -> Result<(), Box<dyn Error>> {
-        app.init()?;
+        app.prepare()?;
         self.start_running();
         while self.is_running() {
-            if self.dispatch(app).is_err() {
+            if let Err(err) = self.tick(app) {
+                crit!(self.logger(), "{err}");
                 self.stop_running();
                 break
             }
-            self.tick(app)?;
         }
         Ok(())
     }
-
-    fn dispatch (&mut self, state: &mut W) -> Result<(), Box<dyn Error>>;
 
     fn tick (&mut self, state: &mut W) -> Result<(), Box<dyn Error>>;
 

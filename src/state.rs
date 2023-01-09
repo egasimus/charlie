@@ -64,7 +64,7 @@ impl<'a> Widget for State {
 
     type RenderData = ScreenId;
 
-    fn init (&mut self) -> Result<(), Box<dyn Error>> {
+    fn prepare (&mut self) -> Result<(), Box<dyn Error>> {
         println!("DISPLAY={:?}", ::std::env::var("DISPLAY"));
         println!("WAYLAND_DISPLAY={:?}", ::std::env::var("WAYLAND_DISPLAY"));
         println!("{:?}", self.startup);

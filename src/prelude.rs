@@ -3,23 +3,18 @@ pub(crate) use crate::{
     state::{State, Screen}
 };
 
-pub(crate) use std::error::Error;
-
-pub(crate) use std::rc::Rc;
-
-pub(crate) use std::cell::{Cell, RefCell};
-
-pub(crate) use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
-
-pub(crate) use std::time::Instant;
-
-pub(crate) use std::path::Path;
-
-pub(crate) use std::collections::HashMap;
+pub(crate) use std::{
+    error::Error,
+    rc::Rc,
+    cell::{Cell, RefCell},
+    sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}},
+    time::{Instant, Duration},
+    path::Path,
+    collections::HashMap,
+    os::fd::AsRawFd
+};
 
 pub(crate) use slog::{Logger, Drain, o, info, debug, warn, trace, error, crit};
-
-pub(crate) use std::os::fd::AsRawFd;
 
 pub(crate) use smithay::backend::{
     input::{
