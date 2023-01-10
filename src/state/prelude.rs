@@ -107,6 +107,7 @@ pub(crate) use smithay::{
         Transform,
         Clock,
         Monotonic,
+        Buffer,
         x11rb::X11Source,
     },
 };

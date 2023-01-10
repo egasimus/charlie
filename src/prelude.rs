@@ -1,6 +1,6 @@
 pub(crate) use crate::{
     traits::*,
-    state::{State, Screen}
+    state::{State, ScreenState},
 };
 
 pub(crate) use std::{

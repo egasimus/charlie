@@ -52,24 +52,8 @@ impl XdgShellHandler for State {
 
     fn new_toplevel (&mut self, surface: ToplevelSurface) {
         let window = Window::new(Kind::Xdg(surface));
-        // place the window at a random location on the primary output
-        // or if there is not output in a [0;800]x[0;800] square
-        use rand::distributions::{Distribution, Uniform};
-        let output = self.space.outputs().next().cloned();
-        let output_geometry = output.and_then(|o| {
-            let geo  = self.space.output_geometry(&o)?;
-            let map  = smithay::desktop::layer_map_for_output(&o);
-            let zone = map.non_exclusive_zone();
-            Some(Rectangle::from_loc_and_size(geo.loc + zone.loc, zone.size))
-        }).unwrap_or_else(|| Rectangle::from_loc_and_size((0, 0), (800, 800)));
-        let max_x = output_geometry.loc.x + (((output_geometry.size.w as f32) / 3.0) * 2.0) as i32;
-        let max_y = output_geometry.loc.y + (((output_geometry.size.h as f32) / 3.0) * 2.0) as i32;
-        let x_range = Uniform::new(output_geometry.loc.x, max_x);
-        let y_range = Uniform::new(output_geometry.loc.y, max_y);
-        let mut rng = rand::thread_rng();
-        let x = x_range.sample(&mut rng);
-        let y = y_range.sample(&mut rng);
-        self.space.map_element(window, (x, y), true);
+        debug!(self.logger, "New toplevel window: {window:?}");
+        self.window_add(window);
     }
 
     fn new_popup (&mut self, surface: PopupSurface, positioner: PositionerState) {
@@ -93,13 +77,9 @@ impl XdgShellHandler for State {
         let wl_surface = surface.wl_surface();
         if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
             let pointer = seat.get_pointer().unwrap();
-            let window = self.space.elements().find(|w| w.toplevel().wl_surface() == wl_surface).unwrap().clone();
-            let initial_window_location = self.space.element_location(&window).unwrap();
-            let grab = MoveSurfaceGrab {
-                start_data,
-                window,
-                initial_window_location,
-            };
+            let window = self.window_find(wl_surface).unwrap();
+            let initial_window_location = Default::default();//self.space.element_location(&window).unwrap();
+            let grab = MoveSurfaceGrab { start_data, window: window.clone(), initial_window_location, };
             pointer.set_grab(self, grab, serial, Focus::Clear);
         }
     }
@@ -115,20 +95,18 @@ impl XdgShellHandler for State {
         let wl_surface = surface.wl_surface();
         if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
             let pointer = seat.get_pointer().unwrap();
-            let window = self.space.elements()
-                .find(|w| w.toplevel().wl_surface() == wl_surface).unwrap()
-                .clone();
-            let initial_window_location = self.space.element_location(&window).unwrap();
-            let initial_window_size = window.geometry().size;
+            let window = self.window_find(wl_surface).unwrap();
+            //let initial_window_location = Default::default();//self.space.element_location(&window).unwrap();
+            //let initial_window_size = (*window).geometry().size;
             surface.with_pending_state(|state| { state.states.set(XdgToplevelState::Resizing); });
             surface.send_configure();
-            let grab = ResizeSurfaceGrab::start(
-                start_data,
-                window,
-                edges.into(),
-                Rectangle::from_loc_and_size(initial_window_location, initial_window_size),
-            );
-            pointer.set_grab(self, grab, serial, Focus::Clear);
+            //let grab = ResizeSurfaceGrab::start(
+                //start_data,
+                //window.clone(),
+                //edges.into(),
+                //Rectangle::from_loc_and_size(initial_window_location, initial_window_size),
+            //);
+            //pointer.set_grab(self, grab, serial, Focus::Clear);
         }
     }
 
@@ -177,8 +155,36 @@ impl CompositorHandler for State {
 
     /// Commit each surface - what does it do?
     fn commit (&mut self, surface: &WlSurface) {
-        // What does this do?
-        on_commit_buffer_handler(surface);
+        use smithay::backend::renderer::utils::{
+            RendererSurfaceState         as State,
+            RendererSurfaceStateUserData as StateData
+        };
+        let mut surface = surface.clone();
+        loop {
+            let mut new = false;
+            compositor::with_states(&surface, |surface_data| {
+                new = surface_data.data_map.insert_if_missing(||RefCell::new(State::default()));
+                surface_data.data_map.get::<StateData>().unwrap()
+                    .borrow_mut().update_buffer(surface_data);
+            });
+            if new {
+                smithay::wayland::compositor::add_destruction_hook(&surface, |data| {
+                    let data = data.data_map.get::<StateData>();
+                    if let Some(buffer) = data.and_then(|s|s.borrow_mut().buffer.take()) {
+                        buffer.release()
+                    }
+                })
+            }
+            match smithay::wayland::compositor::get_parent(&surface) {
+                Some(parent) => surface = parent,
+                None => break
+            }
+        }
+        if let Some(window) = self.window_find(&surface) {
+            window.on_commit();
+        } else {
+            warn!(self.logger, "could not find window for root toplevel surface {surface:?}");
+        };
     }
 }
 

@@ -49,7 +49,7 @@ impl Pointer {
         &self,
         frame:  &mut Gles2Frame,
         size:   Size<i32, Physical>,
-        screen: &Screen
+        screen: &ScreenState
     ) -> Result<(), Box<dyn Error>> {
         let damage = Rectangle::<i32, Physical>::from_loc_and_size(
             Point::<i32, Physical>::from((0i32, 0i32)),
@@ -90,8 +90,8 @@ impl PointerGrab<State> for MoveSurfaceGrab {
 
         let delta = event.location - self.start_data.location;
         let new_location = self.initial_window_location.to_f64() + delta;
-        data.space
-            .map_element(self.window.clone(), new_location.to_i32_round(), true);
+        //data.space
+            //.map_element(self.window.clone(), new_location.to_i32_round(), true);
     }
 
     fn button(
@@ -318,7 +318,6 @@ impl ResizeSurfaceState {
         compositor::with_states(surface, |states| {
             states.data_map.insert_if_missing(RefCell::<Self>::default);
             let state = states.data_map.get::<RefCell<Self>>().unwrap();
-
             cb(&mut state.borrow_mut())
         })
     }
