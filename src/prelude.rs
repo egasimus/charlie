@@ -10,8 +10,9 @@ pub(crate) use std::{
     sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}},
     time::{Instant, Duration},
     path::Path,
-    collections::HashMap,
-    os::fd::AsRawFd
+    collections::{HashMap, hash_map::Entry},
+    os::fd::AsRawFd,
+    any::TypeId
 };
 
 pub(crate) use slog::{Logger, Drain, o, info, debug, warn, trace, error, crit};

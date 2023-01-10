@@ -153,21 +153,23 @@ impl CompositorHandler for State {
         &mut self.delegated.compositor
     }
 
-    /// Commit each surface - what does it do?
+    /// Commit each surface, binding a state data buffer to it.
+    /// AFAIK This buffer contains the texture which is imported before each render.
     fn commit (&mut self, surface: &WlSurface) {
+        debug!(self.logger, "Commit {surface:?}");
         use smithay::backend::renderer::utils::{
             RendererSurfaceState         as State,
             RendererSurfaceStateUserData as StateData
         };
         let mut surface = surface.clone();
         loop {
-            let mut new = false;
+            let mut is_new = false;
             compositor::with_states(&surface, |surface_data| {
-                new = surface_data.data_map.insert_if_missing(||RefCell::new(State::default()));
-                surface_data.data_map.get::<StateData>().unwrap()
-                    .borrow_mut().update_buffer(surface_data);
+                is_new = surface_data.data_map.insert_if_missing(||RefCell::new(State::default()));
+                let mut data = surface_data.data_map.get::<StateData>().unwrap().borrow_mut();
+                data.update_buffer(surface_data);
             });
-            if new {
+            if is_new {
                 smithay::wayland::compositor::add_destruction_hook(&surface, |data| {
                     let data = data.data_map.get::<StateData>();
                     if let Some(buffer) = data.and_then(|s|s.borrow_mut().buffer.take()) {
