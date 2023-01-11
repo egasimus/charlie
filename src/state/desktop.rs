@@ -1,5 +1,67 @@
 use super::prelude::*;
 
+pub struct Desktop {
+    logger:  Logger,
+    /// A collection of windows that are mapped across the screens
+    windows: Vec<WindowState>,
+    /// A collection of views into the workspace, bound to engine outputs
+    pub screens: Vec<ScreenState>,
+}
+
+impl Desktop {
+    pub fn new (logger: Logger) -> Self {
+        Self {
+            logger,
+            windows: vec![],
+            screens: vec![],
+        }
+    }
+
+    /// Add a viewport into the workspace.
+    pub fn screen_add (&mut self, screen: ScreenState) -> usize {
+        self.screens.push(screen);
+        self.screens.len() - 1
+    }
+
+    /// Add a window to the workspace.
+    pub fn window_add (&mut self, window: Window) -> usize {
+        self.windows.push(WindowState::new(window));
+        self.windows.len() - 1
+    }
+
+    /// Find a window by its top level surface.
+    pub fn window_find (&self, surface: &WlSurface) -> Option<&Window> {
+        self.windows.iter()
+            .find(|w| w.window.toplevel().wl_surface() == surface)
+            .map(|w|&w.window)
+    }
+
+    pub fn import (&self, renderer: &mut Gles2Renderer) -> Result<(), Box<dyn Error>> {
+        for window in self.windows.iter() {
+            window.import(&self.logger, renderer)?;
+        }
+        Ok(())
+    }
+
+    pub fn render (&self, frame: &mut Gles2Frame, size: Size<i32, Physical>) -> Result<(), Box<dyn Error>> {
+        for window in self.windows.iter() {
+            window.render(&self.logger, frame, size)?;
+        }
+        Ok(())
+    }
+
+    pub fn tick (&self, output: &Output, time: Time<Monotonic>) {
+        for window in self.windows.iter() {
+            window.window.send_frame(
+                output,
+                Duration::from(time),
+                Some(Duration::from_secs(1)),
+                smithay::desktop::utils::surface_primary_scanout_output
+            );
+        }
+    }
+}
+
 pub struct WindowState {
     pub window: Window,
     center: Point<f64, Logical>,

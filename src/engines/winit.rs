@@ -10,7 +10,7 @@ use smithay::backend::{
         context::GlAttributes,
         display::EGLDisplay
     },
-    renderer::{Bind, Renderer, Frame, ImportDma},
+    renderer::Bind,
     winit::{
         Error as WinitError, WindowSize, WinitVirtualDevice, WinitEvent,
         WinitKeyboardInputEvent,
@@ -31,10 +31,10 @@ use smithay::reexports::winit::{
 use wayland_egl as wegl;
 
 pub struct WinitEngine<W: 'static> {
-    logger:  Logger,
-    running: Arc<AtomicBool>,
-    events:  EventLoop<'static, W>,
-    display: Rc<RefCell<Display<W>>>,
+    logger:        Logger,
+    running:       Arc<AtomicBool>,
+    events:        EventLoop<'static, W>,
+    display:       Rc<RefCell<Display<W>>>,
     winit_host:    WinitHost,
     winit_outputs: Vec<WinitOutput>,
     winit_inputs:  Vec<WinitInput>
@@ -46,7 +46,7 @@ impl<W> Stoppable for WinitEngine<W> {
     }
 }
 
-impl<W: Widget + 'static> WinitEngine<W> {
+impl<W: Widget> WinitEngine<W> {
     pub fn new (logger: &Logger) -> Result<Self, Box<dyn Error>> {
         debug!(logger, "Starting Winit engine");
         Ok(Self {
@@ -63,22 +63,18 @@ impl<W: Widget + 'static> WinitEngine<W> {
 
 type ScreenId = usize;
 
-impl<W: Widget<RenderData=ScreenId>> Engine<W> for WinitEngine<W> {
+impl<W> Engine for WinitEngine<W> where W: Widget<RenderData=ScreenId> {
+
+    type State = W;
+
     fn logger (&self) -> Logger {
         self.logger.clone()
     }
-    fn display_handle (&self) -> DisplayHandle {
-        self.display.borrow().handle()
+    fn display (&self) -> &Rc<RefCell<Display<W>>> {
+        &self.display
     }
-    fn display_fd (&self) -> i32 {
-        self.display.borrow_mut().backend().poll_fd().as_raw_fd()
-    }
-    fn display_dispatcher (&self) -> Box<dyn Fn(&mut W) -> Result<usize, std::io::Error>> {
-        let display = self.display.clone();
-        Box::new(move |widget| { display.borrow_mut().dispatch_clients(widget) })
-    }
-    fn event_handle (&self) -> LoopHandle<'static, W> {
-        self.events.handle()
+    fn events (&self) -> &EventLoop<'static, W> {
+        &self.events
     }
     fn renderer (&mut self) -> &mut Gles2Renderer {
         self.winit_host.renderer()

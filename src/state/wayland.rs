@@ -8,7 +8,7 @@ use smithay::reexports::wayland_server::backend::{ClientId, ClientData, Disconne
 pub struct WaylandListener(OsString);
 
 impl WaylandListener {
-    pub fn new (engine: &impl Engine<State>) -> Result<Self, Box<dyn Error>> {
+    pub fn new (engine: &impl Engine) -> Result<Self, Box<dyn Error>> {
         let socket = ListeningSocketSource::new_auto(engine.logger()).unwrap();
         let name = socket.socket_name().to_os_string();
         let handle = engine.event_handle();

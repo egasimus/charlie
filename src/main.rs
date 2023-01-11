@@ -12,7 +12,7 @@ use crate::state::ScreenState;
 fn main () -> Result<(), Box<dyn Error>> {
     let (logger, _guard) = init_log();
     let mut engine = WinitEngine::new(&logger)?;
-    let mut state  = State::new(&mut engine)?;
+    let mut state  = App::new(&mut engine)?;
     state.startup_add("glxgears", &[]);
     state.startup_add("wezterm", &[]);
     engine.output_add("Alice", state.screen_add(ScreenState::new((-100.0, 0.0), (0.0, 0.0))))?;

@@ -14,7 +14,6 @@ pub(crate) use smithay::{
             on_commit_buffer_handler,
             RendererSurfaceState,
             RendererSurfaceStateUserData,
-            SERIAL_COUNTER
         }
     },
     input::{
@@ -97,8 +96,6 @@ pub(crate) use smithay::{
             ToplevelSurface,
             XdgShellHandler,
             XdgShellState,
-            XdgToplevelSurfaceData,
-            SurfaceCachedState
         },
     },
     xwayland::{
@@ -107,7 +104,6 @@ pub(crate) use smithay::{
     },
     desktop::{
         Kind,
-        Space,
         Window,
         X11Surface
     },
@@ -118,6 +114,7 @@ pub(crate) use smithay::{
         Clock,
         Monotonic,
         Buffer,
+        SERIAL_COUNTER,
         x11rb::X11Source,
     },
 };

@@ -41,7 +41,9 @@ pub trait Stoppable {
 
 }
 
-pub trait Engine<W: Widget>: Stoppable + Sized {
+pub trait Engine: Stoppable + Sized + 'static {
+
+    type State;
 
     fn init (self) -> Result<Self, Box<dyn Error>> {
         Ok(self)
@@ -50,17 +52,32 @@ pub trait Engine<W: Widget>: Stoppable + Sized {
     /// Obtain a copy of the logger.
     fn logger (&self) -> Logger;
 
-    /// Obtain a handle to the display.
-    fn display_handle (&self) -> DisplayHandle;
+    /// Obtain a reference to the display.
+    fn display (&self) -> &Rc<RefCell<Display<Self::State>>>;
+
+    /// Obtain a reference to the event loop.
+    fn events (&self) -> &EventLoop<'static, Self::State>;
+
+    /// Obtain a reference to the display.
+    fn display_handle (&self) -> DisplayHandle {
+        self.display().borrow().handle()
+    }
 
     /// Obtain a pollable file descriptor for the display.
-    fn display_fd (&self) -> i32;
+    fn display_fd (&self) -> i32 {
+        self.display().borrow_mut().backend().poll_fd().as_raw_fd()
+    }
 
     /// Obtain a callable which dispatches display state to clients.
-    fn display_dispatcher (&self) -> Box<dyn Fn(&mut W) -> Result<usize, std::io::Error>>;
+    fn display_dispatcher (&self) -> Box<dyn Fn(&mut Self::State) -> Result<usize, std::io::Error>> {
+        let display = self.display().clone();
+        Box::new(move |widget| { display.borrow_mut().dispatch_clients(widget) })
+    }
 
     /// Obtain a handle to the event loop.
-    fn event_handle (&self) -> LoopHandle<'static, W>;
+    fn event_handle (&self) -> LoopHandle<'static, Self::State> {
+        self.events().handle()
+    }
 
     /// Obtain a mutable reference to the renderer.
     fn renderer (&mut self) -> &mut Gles2Renderer;
@@ -88,8 +105,8 @@ pub trait Engine<W: Widget>: Stoppable + Sized {
         unimplemented!();
     }
 
-    fn start (&mut self, app: &mut W) -> Result<(), Box<dyn Error>> {
-        app.prepare()?;
+    fn start (&mut self, app: &mut Self::State) -> Result<(), Box<dyn Error>> {
+        self.prepare(app)?;
         self.start_running();
         while self.is_running() {
             if let Err(err) = self.tick(app) {
@@ -101,7 +118,11 @@ pub trait Engine<W: Widget>: Stoppable + Sized {
         Ok(())
     }
 
-    fn tick (&mut self, state: &mut W) -> Result<(), Box<dyn Error>>;
+    fn prepare (&mut self, app: &mut Self::State) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
+
+    fn tick (&mut self, state: &mut Self::State) -> Result<(), Box<dyn Error>>;
 
 }
 

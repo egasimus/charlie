@@ -1,6 +1,6 @@
 pub(crate) use crate::{
     traits::*,
-    state::{State, ScreenState},
+    state::{App, ScreenState},
 };
 
 pub(crate) use std::{
@@ -25,17 +25,11 @@ pub(crate) use smithay::backend::{
     renderer::{
         Renderer,
         Frame,
-        element::{
-            Element,
-            RenderElement,
-            surface::WaylandSurfaceRenderElement
-        },
         damage::DamageTrackedRenderer,
         gles2::{
             Gles2Renderer, 
             Gles2Frame,
             Gles2Texture,
-            Gles2Error
         },
     }
 };
@@ -48,7 +42,7 @@ pub(crate) use smithay::reexports::calloop::{EventLoop, LoopHandle};
 
 pub(crate) use smithay::reexports::wayland_server::{Display, DisplayHandle};
 
-pub(crate) use smithay::utils::{Point, Size, Rectangle, Logical, Physical};
+pub(crate) use smithay::utils::{Time, Point, Size, Rectangle, Logical, Physical};
 
 pub(crate) fn init_log () -> (Logger, slog_scope::GlobalLoggerGuard) {
     // A logger facility, here we use the terminal here

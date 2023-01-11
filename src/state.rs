@@ -1,7 +1,7 @@
 mod prelude;
 mod wayland;
 mod handle;
-mod window;
+mod desktop;
 mod pointer;
 mod keyboard;
 mod xwayland;
@@ -9,41 +9,39 @@ mod xwayland;
 use self::prelude::*;
 use self::wayland::WaylandListener;
 use self::handle::DelegatedState;
-use self::window::WindowState;
+use self::desktop::Desktop;
 use self::pointer::Pointer;
 use self::keyboard::Keyboard;
 use self::xwayland::XWaylandState;
 
-pub struct State {
-    logger: Logger,
-    /// A collection of windows that are mapped across the screens
-    windows: Vec<WindowState>,
-    /// A collection of views into the workspace, bound to engine outputs
-    screens: Vec<ScreenState>,
-    /// State of the mouse pointer(s)
-    pointers: Vec<Pointer>,
-    /// State of the keyboard(s)
-    keyboards: Vec<Keyboard>,
+pub struct App {
+    logger:        Logger,
     /// A wayland socket listener
-    wayland: WaylandListener,
+    wayland:       WaylandListener,
     /// State of the X11 integration.
     pub xwayland:  XWaylandState,
     /// States of smithay-provided implementations of compositor features
     pub delegated: DelegatedState,
     /// Commands to run after successful initialization
-    startup: Vec<(String, Vec<String>)>,
+    startup:       Vec<(String, Vec<String>)>,
+    /// The collection of windows and their layouts
+    desktop:       Rc<RefCell<Desktop>>,
+    /// State of the mouse pointer(s)
+    pointers:      Vec<Pointer>,
+    /// State of the keyboard(s)
+    keyboards:     Vec<Keyboard>,
 }
 
-impl State {
+impl App {
 
-    pub fn new (engine: &mut impl Engine<Self>) -> Result<Self, Box<dyn Error>> {
+    pub fn new (engine: &mut impl Engine<State=Self>) -> Result<Self, Box<dyn Error>> {
+        let desktop = Rc::new(RefCell::new(Desktop::new(engine.logger())));
         Ok(Self {
             logger:    engine.logger(),
-            screens:   vec![],
-            windows:   vec![],
             wayland:   WaylandListener::new(engine)?,
             xwayland:  XWaylandState::new(engine)?,
             delegated: DelegatedState::new(engine)?,
+            desktop,
             pointers:  vec![],
             keyboards: vec![],
             startup:   vec![],
@@ -72,12 +70,16 @@ impl State {
     }
 
     /// Add a viewport into the workspace.
-    pub fn screen_add (&mut self, screen: ScreenState) -> usize {
-        self.screens.push(screen);
-        self.screens.len() - 1
+    pub fn screen_add (&self, screen: ScreenState) -> usize {
+        self.desktop.borrow_mut().screen_add(screen)
     }
 
-    /// Add an control seat over the workspace.
+    /// Add a window to the workspace.
+    pub fn window_add (&self, window: Window) -> usize {
+        self.desktop.borrow_mut().window_add(window)
+    }
+
+    /// Add a control seat over the workspace.
     pub fn seat_add (
         &mut self,
         name: impl Into<String>,
@@ -99,66 +101,33 @@ impl State {
         Ok(seat)
     }
 
-    /// Add a window to the workspace.
-    pub fn window_add (&mut self, window: Window) -> usize {
-        self.windows.push(WindowState::new(window));
-        self.windows.len() - 1
-    }
-
-    /// Find a window by its top level surface.
-    pub fn window_find (&self, surface: &WlSurface) -> Option<&Window> {
-        self.windows.iter()
-            .find(|w| w.window.toplevel().wl_surface() == surface)
-            .map(|w|&w.window)
-    }
-
 }
 
 type ScreenId = usize;
 
-impl Widget for State {
+impl Widget for App {
 
     type RenderData = ScreenId;
 
     fn render <'r> (
         &'r self, context: RenderContext<'r, Self::RenderData>
     ) -> Result<(), Box<dyn Error>> {
-
         let RenderContext { renderer, output, data: screen } = context;
-
         let (size, transform, scale) = (
             output.current_mode().unwrap().size,
             output.current_transform(),
             output.current_scale()
         );
-
-        for window in self.windows.iter() {
-            window.import(&self.logger, renderer)?;
-        }
-
+        let desktop = self.desktop.borrow_mut();
+        desktop.import(renderer)?;
         let mut frame = renderer.render(size, transform)?;
-
         frame.clear([0.2,0.3,0.4,1.0], &[Rectangle::from_loc_and_size((0, 0), size)])?;
-
-        for window in self.windows.iter() {
-            window.render(&self.logger, &mut frame, size)?;
-        }
-
+        desktop.render(&mut frame, size)?;
         for pointer in self.pointers.iter() {
-            pointer.render(&mut frame, size, &self.screens[screen])?;
+            pointer.render(&mut frame, size, &desktop.screens[screen])?;
         }
-
         frame.finish()?;
-
-        for window in self.windows.iter() {
-            window.window.send_frame(
-                output,
-                Duration::from(self.delegated.clock.now()),
-                Some(Duration::from_secs(1)),
-                smithay::desktop::utils::surface_primary_scanout_output
-            );
-        }
-
+        desktop.tick(output, self.delegated.clock.now());
         Ok(())
     }
 
