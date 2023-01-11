@@ -1,12 +1,14 @@
 mod prelude;
 mod wayland;
 mod handle;
+mod window;
 mod pointer;
 mod xwayland;
 
 use self::prelude::*;
 use self::wayland::WaylandListener;
 use self::handle::DelegatedState;
+use self::window::WindowState;
 use self::pointer::Pointer;
 use self::xwayland::XWaylandState;
 
@@ -148,97 +150,6 @@ impl<'a> Widget for State {
 
 }
 
-pub struct WindowState {
-    window: Window,
-    center: Point<f64, Logical>,
-    size:   Size<f64, Logical>
-}
-
-impl WindowState {
-    pub fn new (window: Window) -> Self {
-        Self { window, center: (0.0, 0.0).into(), size: (0.0, 0.0).into() }
-    }
-
-    /// Import the window's surface into the renderer as a texture
-    fn import (&self, logger: &Logger, renderer: &mut Gles2Renderer)
-        -> Result<(), Box<dyn Error>>
-    {
-        let surface = match self.window.toplevel() {
-            Kind::Xdg(xdgsurface) => xdgsurface.wl_surface(),
-            Kind::X11(x11surface) => &x11surface.surface
-        };
-        with_states(surface, |surface_data| {
-            if let Some(data) = surface_data.data_map.get::<RendererSurfaceStateUserData>() {
-                let data = &mut *data.borrow_mut();
-                let texture_id = (
-                    TypeId::of::<<Gles2Renderer as Renderer>::TextureId>(),
-                    renderer.id().clone()
-                );
-                if let Entry::Vacant(entry) = data.textures.entry(texture_id) {
-                    if let Some(buffer) = data.buffer.as_ref() {
-                        match renderer.import_buffer(
-                            buffer, Some(surface_data), &match buffer_dimensions(buffer) {
-                                Some(size) => vec![Rectangle::from_loc_and_size((0, 0), size)],
-                                None       => vec![]
-                            }
-                        ) {
-                            Some(Ok(m)) => {
-                                warn!(logger, "Loading {m:?}");
-                                entry.insert(Box::new(m));
-                            }
-                            Some(Err(err)) => {
-                                warn!(logger, "Error loading buffer: {}", err);
-                                return Err(err);
-                            }
-                            None => {
-                                error!(logger, "Unknown buffer format for: {:?}", buffer);
-                            }
-                        }
-                    } else {
-                        warn!(logger, "No buffer in {surface_data:?}")
-                    }
-                }
-            } else {
-                warn!(logger, "No RendererSurfaceState for {surface:?}")
-            }
-            Ok(())
-        })?;
-        Ok(())
-    }
-
-    /// Render the window's imported texture into the current frame
-    fn render (&self, logger: &Logger, frame: &mut Gles2Frame, size: Size<i32, Physical>)
-        -> Result<(), Box<dyn Error>>
-    {
-        let (src, dest, damage): (Rectangle<f64, Buffer>, Rectangle<i32, Physical>, Rectangle<i32, Physical>) = (
-            Rectangle::from_loc_and_size((0.0, 0.0), (size.w as f64, size.h as f64)),
-            Rectangle::from_loc_and_size((20, 10), size),
-            Rectangle::from_loc_and_size((0, 0), size)
-        );
-        let surface = match self.window.toplevel() {
-            Kind::Xdg(xdgsurface) => xdgsurface.wl_surface(),
-            Kind::X11(x11surface) => &x11surface.surface
-        };
-        with_states(surface, |surface_data| {
-            if let Some(data) = surface_data.data_map.get::<RendererSurfaceStateUserData>() {
-                if let Some(texture) = data.borrow().texture::<Gles2Renderer>(frame.id()) {
-                    frame.render_texture_from_to(
-                        texture, src, dest, &[damage], Transform::Flipped180, 1.0f32
-                    ).unwrap();
-                } else {
-                    warn!(logger, "No texture in this renderer for {data:?}");
-                    //frame.render_texture_from_to(
-                        //&self.pointer.texture, src, dest, &[damage], Transform::Flipped180, 1.0f32
-                    //).unwrap();
-                }
-            } else {
-                warn!(logger, "No RendererSurfaceState for {surface:?}")
-            }
-        });
-        Ok(())
-    }
-}
-
 pub struct ScreenState {
     center: Point<f64, Logical>,
     size:   Size<f64, Logical>
@@ -256,17 +167,3 @@ impl ScreenState {
         &self.center
     }
 }
-
-        //let mut damage_tracked_renderer = DamageTrackedRenderer::new((800, 600), 1.0, Transform::Normal);
-
-        // Create the render elements from the surface
-        //let location = Point::from((100, 100));
-        //let render_elements: Vec<WaylandSurfaceRenderElement<_>> =
-            //render_elements_from_surface_tree(&mut renderer, &surface, location, 1.0, log.clone());
-
-        //// Render the element(s)
-        //damage_tracked_renderer
-            //.render_output(&mut renderer, 0, &*render_elements, [0.8, 0.8, 0.9, 1.0], log.clone())
-            //.expect("failed to render output");
-
-        // Render the windows in the current frame.
