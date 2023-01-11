@@ -9,7 +9,7 @@ use smithay::input::{
 
 pub struct Pointer {
     logger:        Logger,
-    texture:       Gles2Texture,
+    pub texture:   Gles2Texture,
     status:        Arc<Mutex<Status>>,
     position:      Point<f64, Logical>,
     last_position: Point<f64, Logical>,

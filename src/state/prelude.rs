@@ -7,7 +7,15 @@ pub(crate) use smithay::{
     delegate_seat,
     delegate_shm,
     delegate_xdg_shell,
-    backend::renderer::utils::on_commit_buffer_handler,
+    backend::renderer::{
+        buffer_dimensions,
+        ImportAll,
+        utils::{
+            on_commit_buffer_handler,
+            RendererSurfaceState,
+            RendererSurfaceStateUserData
+        }
+    },
     input::{
         SeatHandler,
         SeatState,
@@ -68,6 +76,7 @@ pub(crate) use smithay::{
             get_parent,
             give_role,
             is_sync_subsurface,
+            add_destruction_hook,
             with_states,
         },
         data_device::{

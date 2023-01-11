@@ -51,9 +51,9 @@ impl XdgShellHandler for State {
     }
 
     fn new_toplevel (&mut self, surface: ToplevelSurface) {
+        debug!(self.logger, "New toplevel surface: {surface:?}");
         surface.send_configure();
         let window = Window::new(Kind::Xdg(surface));
-        debug!(self.logger, "New toplevel window: {window:?}");
         self.window_add(window);
     }
 
@@ -157,56 +157,38 @@ impl CompositorHandler for State {
     /// Commit each surface, binding a state data buffer to it.
     /// AFAIK This buffer contains the texture which is imported before each render.
     fn commit (&mut self, surface: &WlSurface) {
-        on_commit_buffer_handler(surface);
-        //surface.send_configure();
-        //if !is_sync_subsurface(surface) {
-            //let mut root = surface.clone();
-            //while let Some(parent) = get_parent(&root) {
-                //root = parent;
-            //}
-            //if let Some(window) = self.space.elements().find(|w| w.toplevel().wl_surface() == &root) {
-                //window.on_commit();
-            //}
-        //};
         //debug!(self.logger, "Commit {surface:?}");
-        //use smithay::{
-            //backend::renderer::utils::{
-                //RendererSurfaceState         as State,
-                //RendererSurfaceStateUserData as StateData
-            //},
-            //wayland::compositor::{
-                //with_states,
-                //add_destruction_hook,
-                //get_parent
-            //}
-        //};
-        //let mut surface = surface.clone();
-        //loop {
-            //let mut is_new = false;
-            //warn!(self.logger, "Init surface: {surface:?}");
-            //with_states(&surface, |surface_data| {
-                //is_new = surface_data.data_map.insert_if_missing(||RefCell::new(State::default()));
-                //let mut data = surface_data.data_map.get::<StateData>().unwrap().borrow_mut();
-                //data.update_buffer(surface_data);
-            //});
-            //if is_new {
-                //add_destruction_hook(&surface, |data| {
-                    //let data = data.data_map.get::<StateData>();
-                    //if let Some(buffer) = data.and_then(|s|s.borrow_mut().buffer.take()) {
-                        //buffer.release()
-                    //}
-                //})
-            //}
-            //match get_parent(&surface) {
-                //Some(parent) => surface = parent,
-                //None => break
-            //}
-        //}
-        //if let Some(window) = self.window_find(&surface) {
-            //window.on_commit();
-        //} else {
-            //warn!(self.logger, "could not find window for root toplevel surface {surface:?}");
-        //};
+        use smithay::backend::renderer::utils::{
+            RendererSurfaceState         as State,
+            RendererSurfaceStateUserData as StateData
+        };
+        let mut surface = surface.clone();
+        loop {
+            let mut is_new = false;
+            warn!(self.logger, "Init surface: {surface:?}");
+            with_states(&surface, |surface_data| {
+                is_new = surface_data.data_map.insert_if_missing(||RefCell::new(State::default()));
+                let mut data = surface_data.data_map.get::<StateData>().unwrap().borrow_mut();
+                data.update_buffer(surface_data);
+            });
+            if is_new {
+                add_destruction_hook(&surface, |data| {
+                    let data = data.data_map.get::<StateData>();
+                    if let Some(buffer) = data.and_then(|s|s.borrow_mut().buffer.take()) {
+                        buffer.release()
+                    }
+                })
+            }
+            match get_parent(&surface) {
+                Some(parent) => surface = parent,
+                None => break
+            }
+        }
+        if let Some(window) = self.window_find(&surface) {
+            window.on_commit();
+        } else {
+            warn!(self.logger, "could not find window for root toplevel surface {surface:?}");
+        };
     }
 }
 
