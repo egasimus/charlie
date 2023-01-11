@@ -79,7 +79,8 @@ pub trait Engine: Stoppable + 'static {
     fn renderer (&mut self) -> &mut Gles2Renderer;
 
     /// Add an output to the host and bind it to a compositor screen
-    fn output_add (&mut self, name: &str, screen: usize) -> Result<(), Box<dyn Error>>;
+    fn output_add (&mut self, name: &str, screen: usize, width: i32, height: i32)
+        -> Result<(), Box<dyn Error>>;
 
     fn output_change (&mut self) -> Result<(), Box<dyn Error>> {
         unimplemented!();

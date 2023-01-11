@@ -24,6 +24,7 @@ pub struct Pointer {
     status:        Arc<Mutex<Status>>,
     location:      Point<f64, Logical>,
     last_location: Point<f64, Logical>,
+    held:          bool,
 }
 
 impl Pointer {
@@ -40,6 +41,7 @@ impl Pointer {
             last_location: (100.0, 30.0).into(),
             pointer,
             texture,
+            held: false
         })
     }
 
@@ -83,7 +85,7 @@ impl Pointer {
             location,
             1,
             1.0,
-            Transform::Flipped180,
+            Transform::Normal,
             &[damage],
             1.0
         )?)
@@ -124,7 +126,16 @@ impl Pointer {
         index: usize,
         event: B::PointerButtonEvent
     ) {
-        crit!(state.logger, "CLICK!");
+        match event.state() {
+            ButtonState::Pressed => {
+                crit!(state.logger, "CLICK!");
+                state.pointers[index].held = true;
+            },
+            ButtonState::Released => {
+                crit!(state.logger, "CLACK!");
+                state.pointers[index].held = false;
+            }
+        }
         //self.desktop.borrow_mut();
         //let serial = SCOUNTER.next_serial();
         //let button = match evt.button() {

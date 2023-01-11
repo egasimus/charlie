@@ -66,8 +66,6 @@ impl Desktop {
 
 }
 
-type ScreenId = usize;
-
 pub struct ScreenState {
     center: Point<f64, Logical>,
     size:   Size<f64, Logical>
@@ -162,7 +160,7 @@ impl WindowState {
             if let Some(data) = surface_data.data_map.get::<RendererSurfaceStateUserData>() {
                 if let Some(texture) = data.borrow().texture::<Gles2Renderer>(frame.id()) {
                     frame.render_texture_from_to(
-                        texture, src, dest, &[damage], Transform::Flipped180, 1.0f32
+                        texture, src, dest, &[damage], Transform::Normal, 1.0f32
                     ).unwrap();
                 } else {
                     warn!(logger, "No texture in this renderer for {data:?}");

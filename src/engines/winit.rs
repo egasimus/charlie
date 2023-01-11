@@ -77,10 +77,16 @@ impl<W> Engine for WinitEngine<W> where W: Widget<RenderData=WinitRenderData> {
         &mut self.renderer
     }
 
-    fn output_add (&mut self, name: &str, screen: ScreenId) -> Result<(), Box<dyn Error>> {
+    fn output_add (
+        &mut self,
+        name:   &str,
+        screen: ScreenId,
+        width:  i32,
+        height: i32
+    ) -> Result<(), Box<dyn Error>> {
         let window = WinitHostWindow::new(
             &self.logger, &self.winit_events, &Self::make_context(&self.logger, &self.egl_context)?,
-            &format!("Output {screen}"), 720.0, 540.0,
+            &format!("Output {screen}"), width, height,
             screen
         )?;
         let window_id = window.id();
@@ -209,8 +215,8 @@ impl<W: Widget + 'static> WinitEngine<W> {
 pub struct WinitHostWindow {
     logger:   Logger,
     title:    String,
-    width:    f64,
-    height:   f64,
+    width:    i32,
+    height:   i32,
     window:   WinitWindow,
     closing:  bool,
     rollover: u32,
@@ -232,12 +238,12 @@ impl WinitHostWindow {
         events: &WinitEventLoop<()>,
         egl:    &EGLContext,
         title:  &str,
-        width:  f64,
-        height: f64,
+        width:  i32,
+        height: i32,
         screen: ScreenId
     ) -> Result<Self, Box<dyn Error>> {
 
-        let (w, h, hz, subpixel) = (720, 540, 60_000, Subpixel::Unknown);
+        let (w, h, hz, subpixel) = (width, height, 60_000, Subpixel::Unknown);
 
         let output = Output::new(title.to_string(), PhysicalProperties {
             size: (w, h).into(), subpixel, make: "Smithay".into(), model: "Winit".into()
@@ -299,8 +305,8 @@ impl WinitHostWindow {
         logger: &Logger,
         events: &WinitEventLoop<()>,
         title:  &str,
-        width:  f64,
-        height: f64
+        width:  i32,
+        height: i32
     ) -> Result<WinitWindow, Box<dyn Error>> {
         debug!(logger, "Building Winit window: {title} ({width}x{height})");
         let window = WindowBuilder::new()
@@ -373,7 +379,7 @@ impl WinitHostWindow {
         event:    WindowEvent,
         callback: &mut impl FnMut(WinitEvent)
     ) -> () {
-        debug!(self.logger, "Winit Window Event: {self:?} {event:?}");
+        //debug!(self.logger, "Winit Window Event: {self:?} {event:?}");
         let duration = Instant::now().duration_since(*started);
         let nanos = duration.subsec_nanos() as u64;
         let time = ((1000 * duration.as_secs()) + (nanos / 1_000_000)) as u32;

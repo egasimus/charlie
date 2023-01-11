@@ -64,7 +64,7 @@ impl App<AppState> {
     /// Add a viewport into the workspace.
     pub fn output (&mut self, name: &str, w: i32, h: i32, x: f64, y: f64) -> Result<&mut Self, Box<dyn Error>> {
         let screen = self.state.desktop.borrow_mut().screen_add(ScreenState::new((x, y), (w as f64, h as f64)));
-        self.engine.output_add(name, screen)?;
+        self.engine.output_add(name, screen, w, h)?;
         Ok(self)
     }
 
@@ -141,7 +141,7 @@ impl Widget for AppState {
         );
         let desktop = desktop.borrow_mut();
         desktop.import(renderer)?;
-        let mut frame = renderer.render(size, transform)?;
+        let mut frame = renderer.render(size, Transform::Flipped180)?;
         frame.clear([0.2,0.3,0.4,1.0], &[Rectangle::from_loc_and_size((0, 0), size)])?;
         desktop.render(&mut frame, size)?;
         for pointer in pointers.iter() {

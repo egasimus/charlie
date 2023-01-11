@@ -21,7 +21,8 @@ pub(crate) use smithay::{
         },
         input::{
             Event,
-            AbsolutePositionEvent
+            AbsolutePositionEvent,
+            ButtonState
         }
     },
     input::{
