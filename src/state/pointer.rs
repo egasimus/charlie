@@ -19,28 +19,25 @@ use smithay::{
 
 pub struct Pointer {
     logger:        Logger,
-    state:         Rc<RefCell<AppState>>,
-    pointer:       PointerHandle<AppState>,
+    pub pointer:   PointerHandle<AppState>,
     pub texture:   Gles2Texture,
     status:        Arc<Mutex<Status>>,
-    position:      Point<f64, Logical>,
-    last_position: Point<f64, Logical>,
+    location:      Point<f64, Logical>,
+    last_location: Point<f64, Logical>,
 }
 
 impl Pointer {
 
     pub fn new (
         logger:  &Logger,
-        state:   &Rc<RefCell<AppState>>,
         pointer: PointerHandle<AppState>,
         texture: Gles2Texture
     ) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
             logger:        logger.clone(),
-            state:         state.clone(),
             status:        Arc::new(Mutex::new(Status::Default)),
-            position:      (100.0, 30.0).into(),
-            last_position: (100.0, 30.0).into(),
+            location:      (100.0, 30.0).into(),
+            last_location: (100.0, 30.0).into(),
             pointer,
             texture,
         })
@@ -63,8 +60,8 @@ impl Pointer {
         } else {
             (0, 0).into()
         };
-        let position = self.position - hotspot.to_f64();
-        (visible, position)
+        let location = self.location - hotspot.to_f64();
+        (visible, location)
     }
 
     pub fn render (
@@ -77,13 +74,13 @@ impl Pointer {
             Point::<i32, Physical>::from((0i32, 0i32)),
             size
         );
-        let x = self.position.x + screen.center().x;
-        let y = self.position.y + screen.center().y;
-        let position = Point::<f64, Logical>::from((x, y)).to_physical(1.0).to_i32_round();
+        let x = self.location.x + screen.center().x;
+        let y = self.location.y + screen.center().y;
+        let location = Point::<f64, Logical>::from((x, y)).to_physical(1.0).to_i32_round();
         //let size = self.texture.size();
         Ok(frame.render_texture_at(
             &self.texture,
-            position,
+            location,
             1,
             1.0,
             Transform::Flipped180,
@@ -92,22 +89,43 @@ impl Pointer {
         )?)
     }
 
-    pub fn on_move_relative<B: InputBackend>(&mut self, evt: B::PointerMotionEvent) {
-        let delta = evt.delta();
+    pub fn on_move_relative<B: InputBackend>(
+        state: &mut AppState,
+        index: usize,
+        event: B::PointerMotionEvent
+    ) {
+        let delta = event.delta();
         panic!("{:?}", delta);
     }
 
-    pub fn on_move_absolute<B: InputBackend>(&mut self, event: &MotionEvent) {
-        self.pointer.motion(&mut *self.state.borrow_mut(), None, event)
+    pub fn on_move_absolute<B: InputBackend>(
+        state: &mut AppState,
+        index: usize,
+        event: B::PointerMotionAbsoluteEvent
+    ) {
+        let pointer = &mut state.pointers[index];
+        pointer.last_location = pointer.location;
+        pointer.location = (event.x(), event.y()).into();
+        pointer.pointer.clone().motion(state, None, &MotionEvent {
+            location: (event.x(), event.y()).into(),
+            serial: SERIAL_COUNTER.next_serial(),
+            time: event.time()
+        })
         //self.pointer.motion(
-            //self.position,
+            //self.location,
             //under,
             //SERIAL_COUNTER.next_serial(),
             //evt.time()
         //);
     }
 
-    pub fn on_button<B: InputBackend>(&mut self, evt: B::PointerButtonEvent) {
+    pub fn on_button<B: InputBackend>(
+        state: &mut AppState,
+        index: usize,
+        event: B::PointerButtonEvent
+    ) {
+        crit!(state.logger, "CLICK!");
+        //self.desktop.borrow_mut();
         //let serial = SCOUNTER.next_serial();
         //let button = match evt.button() {
             //MouseButton::Left => 0x110,
@@ -140,7 +158,11 @@ impl Pointer {
         //self.pointer.button(button, state, serial, evt.time());
     }
 
-    pub fn on_axis<B: InputBackend>(&mut self, evt: B::PointerAxisEvent) {
+    pub fn on_axis<B: InputBackend>(
+        state: &mut AppState,
+        index: usize,
+        event: B::PointerAxisEvent
+    ) {
         //let source = match evt.source() {
             //AxisSource::Continuous => wl_pointer::AxisSource::Continuous,
             //AxisSource::Finger => wl_pointer::AxisSource::Finger,

@@ -19,7 +19,10 @@ pub(crate) use smithay::{
                 RendererSurfaceStateUserData,
             }
         },
-        input::AbsolutePositionEvent
+        input::{
+            Event,
+            AbsolutePositionEvent
+        }
     },
     input::{
         SeatHandler,
@@ -68,7 +71,7 @@ pub(crate) use smithay::{
                     Window as X11Window,
                     WindowClass,
                 },
-                Event,
+                Event as X11Event,
             },
             rust_connection::{DefaultStream, RustConnection},
         }

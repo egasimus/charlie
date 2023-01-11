@@ -19,7 +19,7 @@ pub struct XWaylandState {
 
 impl XWaylandState {
 
-    pub fn new (engine: &impl Engine<State=AppState>) -> Result<Self, Box<dyn Error>> {
+    pub fn new (engine: &mut impl Engine<State=AppState>) -> Result<Self, Box<dyn Error>> {
         let logger  = engine.logger();
         let events  = engine.event_handle();
         let display = engine.display_handle();
@@ -128,11 +128,11 @@ impl XWaylandConnection {
     }
 
     fn handle_event (
-        &mut self, event: Event, dh: &DisplayHandle//, space: &mut Space<Window>
+        &mut self, event: X11Event, dh: &DisplayHandle//, space: &mut Space<Window>
     ) -> Result<(), ReplyOrIdError> {
         debug!(self.logger, "X11: Got event {:?}", event);
         match event {
-            Event::ConfigureRequest(r) => {
+            X11Event::ConfigureRequest(r) => {
                 // Just grant the wish
                 let mut aux = ConfigureWindowAux::default();
                 if r.value_mask & u16::from(ConfigWindow::STACK_MODE) != 0 {
@@ -158,11 +158,11 @@ impl XWaylandConnection {
                 }
                 self.conn.configure_window(r.window, &aux)?;
             }
-            Event::MapRequest(r) => {
+            X11Event::MapRequest(r) => {
                 // Just grant the wish
                 self.conn.map_window(r.window)?;
             }
-            Event::ClientMessage(msg) => {
+            X11Event::ClientMessage(msg) => {
                 if msg.type_ == self.atoms.WL_SURFACE_ID {
                     // We get a WL_SURFACE_ID message when Xwayland creates a WlSurface for a
                     // window. Both the creation of the surface and this client message happen at

@@ -14,105 +14,14 @@ use self::pointer::Pointer;
 use self::keyboard::Keyboard;
 use self::xwayland::XWaylandState;
 
-pub struct App<E: Engine<State=S>, S> {
+/// Couples an engine to a state struct.
+pub struct App<S> {
     logger: Logger,
-    engine: E,
-    state:  Rc<RefCell<S>>,
+    engine: Box<dyn Engine<State=S>>,
+    state:  S,
 }
 
-impl<E: Engine<State=AppState>> App<E, AppState> {
-
-    /// Create a new application instance.
-    pub fn new (mut engine: E) -> Result<Self, Box<dyn Error>> {
-        Ok(Self {
-            logger: engine.logger(),
-            state:  Rc::new(RefCell::new(AppState::new(&mut engine)?)),
-            engine
-        })
-    }
-
-    /// Add a command to run on startup.
-    /// TODO: Integrate a `systemd --user` session
-    pub fn startup (&mut self, command: &str, args: &[&str]) -> &mut Self {
-        self.state.borrow_mut().startup.push((
-            String::from(command),
-            args.iter().map(|arg|String::from(*arg)).collect()
-        ));
-        self
-    }
-
-    /// Add a viewport into the workspace.
-    pub fn output (&mut self, name: &str, w: i32, h: i32, x: f64, y: f64) -> Result<&mut Self, Box<dyn Error>> {
-        let screen = self.state.borrow_mut().desktop.screen_add(ScreenState::new((x, y), (w as f64, h as f64)));
-        self.engine.output_add(name, screen)?;
-        Ok(self)
-    }
-
-    /// Add a control seat over the workspace.
-    pub fn input (&mut self, name: &str, cursor: &str) -> Result<&mut Self, Box<dyn Error>> {
-        {
-            let mut state = self.state.borrow_mut();
-            let mut seat = state.delegated.seat.new_wl_seat(
-                &self.engine.display_handle(),
-                String::from(name),
-                self.logger.clone()
-            );
-            state.pointers.push(Pointer::new(
-                &self.logger,
-                &self.state,
-                seat.add_pointer(),
-                import_bitmap(self.engine.renderer(), cursor)?
-            )?);
-            state.keyboards.push(Keyboard::new(
-                &self.logger,
-                seat.add_keyboard(XkbConfig::default(), 200, 25)?
-            ));
-            seat.add_input_method(XkbConfig::default(), 200, 25);
-        }
-        Ok(self)
-    }
-
-    pub fn screen_add (&self, screen: ScreenState) -> usize {
-        let AppState { desktop, .. } = &mut *self.state.borrow_mut();
-        desktop.screen_add(screen)
-    }
-
-    /// Add a window to the workspace.
-    pub fn window_add (&self, window: Window) -> usize {
-        let AppState { desktop, .. } = &mut *self.state.borrow_mut();
-        desktop.window_add(window)
-    }
-
-    pub fn seat_add (
-        &self,
-        name: impl Into<String>,
-        pointer_image: Gles2Texture,
-    ) -> Result<Seat<AppState>, Box<dyn Error>> {
-        let AppState { pointers, keyboards, delegated, .. } = &mut *self.state.borrow_mut();
-        let mut seat = delegated.seat.new_wl_seat(
-            &delegated.display_handle,
-            name.into(),
-            self.logger.clone()
-        );
-        pointers.push(Pointer::new(
-            &self.logger,
-            &self.state,
-            seat.add_pointer(),
-            pointer_image
-        )?);
-        keyboards.push(Keyboard::new(
-            &self.logger,
-            seat.add_keyboard(XkbConfig::default(), 200, 25)?
-        ));
-        seat.add_input_method(XkbConfig::default(), 200, 25);
-        Ok(seat)
-    }
-
-    pub fn start (&mut self) -> Result<(), Box<dyn Error>> {
-        self.engine.start(&mut *self.state.borrow_mut())
-    }
-}
-
+/// Contains the compositor state.
 pub struct AppState {
     logger:        Logger,
     /// A wayland socket listener
@@ -124,11 +33,65 @@ pub struct AppState {
     /// Commands to run after successful initialization
     startup:       Vec<(String, Vec<String>)>,
     /// The collection of windows and their layouts
-    desktop:       Desktop,
+    desktop:       Rc<RefCell<Desktop>>,
     /// State of the mouse pointer(s)
     pointers:      Vec<Pointer>,
     /// State of the keyboard(s)
     keyboards:     Vec<Keyboard>,
+}
+
+impl App<AppState> {
+
+    /// Create a new application instance.
+    pub fn new (mut engine: impl Engine<State=AppState>) -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
+            logger: engine.logger(),
+            state:  AppState::new(&mut engine)?,
+            engine: Box::new(engine)
+        })
+    }
+
+    /// Add a command to run on startup.
+    /// TODO: Integrate a `systemd --user` session
+    pub fn startup (&mut self, command: &str, args: &[&str]) -> &mut Self {
+        self.state.startup.push((
+            String::from(command),
+            args.iter().map(|arg|String::from(*arg)).collect()
+        ));
+        self
+    }
+
+    /// Add a viewport into the workspace.
+    pub fn output (&mut self, name: &str, w: i32, h: i32, x: f64, y: f64) -> Result<&mut Self, Box<dyn Error>> {
+        let screen = self.state.desktop.borrow_mut().screen_add(ScreenState::new((x, y), (w as f64, h as f64)));
+        self.engine.output_add(name, screen)?;
+        Ok(self)
+    }
+
+    /// Add a control seat over the workspace.
+    pub fn input (&mut self, name: &str, cursor: &str) -> Result<&mut Self, Box<dyn Error>> {
+        let mut seat = self.state.delegated.seat.new_wl_seat(
+            &self.engine.display_handle(),
+            String::from(name),
+            self.logger.clone()
+        );
+        self.state.pointers.push(Pointer::new(
+            &self.logger,
+            seat.add_pointer(),
+            import_bitmap(self.engine.renderer(), cursor)?
+        )?);
+        self.state.keyboards.push(Keyboard::new(
+            &self.logger,
+            seat.add_keyboard(XkbConfig::default(), 200, 25)?
+        ));
+        seat.add_input_method(XkbConfig::default(), 200, 25);
+        Ok(self)
+    }
+
+    pub fn start (&mut self) -> Result<(), Box<dyn Error>> {
+        self.engine.start(&mut self.state)
+    }
+
 }
 
 impl AppState {
@@ -139,7 +102,7 @@ impl AppState {
             wayland:   WaylandListener::new(engine)?,
             xwayland:  XWaylandState::new(engine)?,
             delegated: DelegatedState::new(engine)?,
-            desktop:   Desktop::new(engine),
+            desktop:   Rc::new(RefCell::new(Desktop::new(engine))),
             pointers:  vec![],
             keyboards: vec![],
             startup:   vec![],
@@ -169,13 +132,14 @@ impl Widget for AppState {
     fn render <'r> (
         &'r self, context: RenderContext<'r, Self::RenderData>
     ) -> Result<(), Box<dyn Error>> {
-        let AppState { desktop, pointers, delegated, .. } = &*self;
+        let AppState { desktop, pointers, delegated, .. } = &self;
         let RenderContext { renderer, output, data: (screen, screen_size) } = context;
         let (size, transform, scale) = (
             output.current_mode().unwrap().size,
             output.current_transform(),
             output.current_scale()
         );
+        let desktop = desktop.borrow_mut();
         desktop.import(renderer)?;
         let mut frame = renderer.render(size, transform)?;
         frame.clear([0.2,0.3,0.4,1.0], &[Rectangle::from_loc_and_size((0, 0), size)])?;
@@ -189,21 +153,20 @@ impl Widget for AppState {
     }
 
     fn handle <B: InputBackend> (&mut self, event: InputEvent<B>) {
-        let AppState { pointers, keyboards, .. } = &mut *self;
+        //let state    = &mut self.state;
+        //let pointer  = &self.state.pointers[0];
+        //let keyboard = &self.state.keyboards[0];
         match event {
             InputEvent::PointerMotion { event, .. }
-                => pointers[0].on_move_relative::<B>(event),
+                => Pointer::on_move_relative::<B>(self, 0, event),
+            InputEvent::PointerMotionAbsolute { event, .. }
+                => Pointer::on_move_absolute::<B>(self, 0, event),
             InputEvent::PointerButton { event, .. }
-                => pointers[0].on_button::<B>(event),
+                => Pointer::on_button::<B>(self, 0, event),
             InputEvent::PointerAxis { event, .. }
-                => pointers[0].on_axis::<B>(event),
+                => Pointer::on_axis::<B>(self, 0, event),
             InputEvent::Keyboard { event, .. }
-                => keyboards[0].on_keyboard::<B>(event),
-            InputEvent::PointerMotionAbsolute { event, .. } => {
-                debug!(self.logger, "{} {}", event.x(), event.y());
-                //let event = MotionEvent { location: 
-                //self.pointers[0].on_move_absolute::<B>(event)
-            },
+                => Keyboard::on_key::<B>(self, 0, event),
             _ => {}
         }
     }

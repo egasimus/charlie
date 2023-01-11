@@ -41,13 +41,9 @@ pub trait Stoppable {
 
 }
 
-pub trait Engine: Stoppable + Sized + 'static {
+pub trait Engine: Stoppable + 'static {
 
     type State;
-
-    fn init (self) -> Result<Self, Box<dyn Error>> {
-        Ok(self)
-    }
 
     /// Obtain a copy of the logger.
     fn logger (&self) -> Logger;

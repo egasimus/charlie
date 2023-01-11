@@ -47,15 +47,19 @@ impl Keyboard {
         }
     }
 
-    pub fn on_keyboard<B: InputBackend> (&mut self, event: B::KeyboardKeyEvent) {
-        let keycode    = event.key_code();
-        let state      = event.state();
+    pub fn on_key <B: InputBackend> (
+        state: &mut AppState,
+        index: usize,
+        event: B::KeyboardKeyEvent
+    ) {
+        let key_code   = event.key_code();
+        let key_state  = event.state();
         let serial     = SERIAL_COUNTER.next_serial();
-        let log        = &self.logger;
+        let log        = &state.logger;
         let time       = Event::time(&event);
-        let hotkeys    = &mut self.hotkeys;
+        let hotkeys    = &mut state.keyboards[index].hotkeys;
         let mut action = KeyAction::None;
-        debug!(self.logger, "key"; "keycode" => keycode, "state" => format!("{:?}", state));
+        debug!(state.logger, "key"; "keycode" => key_code, "state" => format!("{:?}", key_state));
         //self.keyboard.input((), keycode, state, serial, time, |state, modifiers, keysym| {
             //debug!(log, "keysym";
                 //"state"  => format!("{:?}", state),
