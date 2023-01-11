@@ -10,7 +10,7 @@ use smithay::backend::{
         context::GlAttributes,
         display::EGLDisplay
     },
-    renderer::{Bind, Renderer, Frame},
+    renderer::{Bind, Renderer, Frame, ImportDma},
     winit::{
         Error as WinitError, WindowSize, WinitVirtualDevice, WinitEvent,
         WinitKeyboardInputEvent,
@@ -109,75 +109,6 @@ impl<W: Widget<RenderData=ScreenId>> Engine<W> for WinitEngine<W> {
         widget.refresh()?;
         Ok(self.display.borrow_mut().flush_clients()?)
     }
-}
-
-pub struct WinitInput;
-
-impl WinitInput {
-    pub fn new (name: &str) -> Result<Self, Box<dyn Error>> {
-        Ok(Self)
-    }
-}
-
-/// An output bound to a winit host window.
-#[derive(Debug)]
-pub struct WinitOutput {
-    /// Which host window contains this output
-    id:     WindowId,
-    /// Which screen is shown on this output
-    screen: ScreenId,
-    /// The output
-    output: Output,
-    /// Damage tracking
-    damage: DamageTrackedRenderer,
-}
-
-impl WinitOutput {
-
-    /// Create a new host window and attach an output to it.
-    fn new (
-        name:       &str,
-        winit_host: &mut WinitHost,
-        screen:     ScreenId,
-    ) -> Result<Self, Box<dyn Error>> {
-        let w = 720;
-        let h = 540;
-        let hz = 60_000;
-        let output = Output::new(name.to_string(), PhysicalProperties {
-            size:     (w, h).into(),
-            subpixel: Subpixel::Unknown,
-            make:     "Smithay".into(),
-            model:    "Winit".into()
-        }, winit_host.logger.clone());
-        output.change_current_state(
-            Some(Mode { size: (w, h).into(), refresh: hz }),
-            None,
-            None,
-            None
-        );
-        Ok(Self {
-            id: winit_host.window_add(name, 720.0, 540.0)?.id(),
-            screen,
-            damage: DamageTrackedRenderer::from_output(&output),
-            output,
-        })
-    }
-
-    /// Render this output into its corresponding host window
-    fn render (
-        &mut self,
-        winit_host: &mut WinitHost,
-        state:      &mut impl Widget<RenderData=ScreenId>
-    ) -> Result<(), Box<dyn Error>> {
-        winit_host.window_render(&self.id, &mut |renderer, size|{
-            state.render(RenderContext {
-                output: &self.output,
-                data:   self.screen,
-                renderer,
-            })
-        })
-    }
-
 }
 
 /// Contains the main event loop, spawns one or more windows, and dispatches events to them.
@@ -581,34 +512,100 @@ impl std::fmt::Display for WinitHostError {
 
 impl std::error::Error for WinitHostError {}
 
-//use smithay::{
-    //delegate_dmabuf,
-    //backend::allocator::dmabuf::Dmabuf,
-    //reexports::wayland_server::protocol::{
-        //wl_buffer::WlBuffer,
-        //wl_surface::WlSurface
-    //},
-    //wayland::{
-        //buffer::BufferHandler,
-        //dmabuf::{DmabufHandler, DmabufState, DmabufGlobal, ImportError}
-    //}
-//};
+use smithay::{
+    delegate_dmabuf,
+    backend::allocator::dmabuf::Dmabuf,
+    reexports::wayland_server::protocol::{
+        wl_buffer::WlBuffer,
+        wl_surface::WlSurface
+    },
+    wayland::{
+        buffer::BufferHandler,
+        dmabuf::{DmabufHandler, DmabufState, DmabufGlobal, ImportError}
+    }
+};
 
-//impl BufferHandler for WinitHostWindow {
+//impl BufferHandler for WinitHost {
     //fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
 //}
 
-//impl DmabufHandler for WinitHostWindow {
+//impl DmabufHandler for WinitHost {
     //fn dmabuf_state(&mut self) -> &mut DmabufState {
         //&mut self.dmabuf_state
     //}
 
     //fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf) -> Result<(), ImportError> {
-        //self.renderer
-            //.import_dmabuf(&dmabuf, None)
-            //.map(|_| ())
-            //.map_err(|_| ImportError::Failed)
+        //self.renderer.import_dmabuf(&dmabuf, None).map(|_| ()).map_err(|_| ImportError::Failed)
     //}
 //}
 
-//delegate_dmabuf!(WinitHostWindow);
+//delegate_dmabuf!(WinitHost);
+
+pub struct WinitInput;
+
+impl WinitInput {
+    pub fn new (name: &str) -> Result<Self, Box<dyn Error>> {
+        Ok(Self)
+    }
+}
+
+/// An output bound to a winit host window.
+#[derive(Debug)]
+pub struct WinitOutput {
+    /// Which host window contains this output
+    id:     WindowId,
+    /// Which screen is shown on this output
+    screen: ScreenId,
+    /// The output
+    output: Output,
+    /// Damage tracking
+    damage: DamageTrackedRenderer,
+}
+
+impl WinitOutput {
+
+    /// Create a new host window and attach an output to it.
+    fn new (
+        name:       &str,
+        winit_host: &mut WinitHost,
+        screen:     ScreenId,
+    ) -> Result<Self, Box<dyn Error>> {
+        let w = 720;
+        let h = 540;
+        let hz = 60_000;
+        let output = Output::new(name.to_string(), PhysicalProperties {
+            size:     (w, h).into(),
+            subpixel: Subpixel::Unknown,
+            make:     "Smithay".into(),
+            model:    "Winit".into()
+        }, winit_host.logger.clone());
+        output.change_current_state(
+            Some(Mode { size: (w, h).into(), refresh: hz }),
+            None,
+            None,
+            None
+        );
+        Ok(Self {
+            id: winit_host.window_add(name, 720.0, 540.0)?.id(),
+            screen,
+            damage: DamageTrackedRenderer::from_output(&output),
+            output,
+        })
+    }
+
+    /// Render this output into its corresponding host window
+    fn render (
+        &mut self,
+        winit_host: &mut WinitHost,
+        state:      &mut impl Widget<RenderData=ScreenId>
+    ) -> Result<(), Box<dyn Error>> {
+        winit_host.window_render(&self.id, &mut |renderer, size|{
+            state.render(RenderContext {
+                output: &self.output,
+                data:   self.screen,
+                renderer,
+            })
+        })
+    }
+
+}

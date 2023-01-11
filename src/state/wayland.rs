@@ -15,7 +15,7 @@ impl WaylandListener {
         let mut display = engine.display_handle();
         let logger = engine.logger();
         handle.insert_source(socket, move |client_stream, _, _state| {
-            debug!(logger, "new client");
+            debug!(logger, "New client");
             display.insert_client(client_stream, Arc::new(ClientState)).unwrap();
         })?;
         let dispatch = engine.display_dispatcher();
