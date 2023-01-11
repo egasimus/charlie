@@ -36,8 +36,8 @@ pub struct WinitEngine<W: 'static> {
     events:        EventLoop<'static, W>,
     display:       Rc<RefCell<Display<W>>>,
     winit_host:    WinitHost,
-    winit_outputs: Vec<WinitOutput>,
-    winit_inputs:  Vec<WinitInput>
+    winit_outputs: Vec<WinitHostOutput>,
+    winit_inputs:  Vec<WinitHostInput>
 }
 
 impl<W> Stoppable for WinitEngine<W> {
@@ -63,7 +63,7 @@ impl<W: Widget> WinitEngine<W> {
 
 type ScreenId = usize;
 
-impl<W> Engine for WinitEngine<W> where W: Widget<RenderData=ScreenId> {
+impl<W> Engine for WinitEngine<W> where W: Widget<RenderData=WinitRenderData> {
 
     type State = W;
 
@@ -80,10 +80,10 @@ impl<W> Engine for WinitEngine<W> where W: Widget<RenderData=ScreenId> {
         self.winit_host.renderer()
     }
     fn output_add (&mut self, name: &str, screen: ScreenId) -> Result<(), Box<dyn Error>> {
-        Ok(self.winit_outputs.push(WinitOutput::new(name, &mut self.winit_host, screen)?))
+        Ok(self.winit_outputs.push(WinitHostOutput::new(name, &mut self.winit_host, screen)?))
     }
     fn input_add (&mut self, name: &str) -> Result<(), Box<dyn Error>> {
-        Ok(self.winit_inputs.push(WinitInput::new(name)?))
+        Ok(self.winit_inputs.push(WinitHostInput::new(name)?))
     }
     fn tick (&mut self, widget: &mut W) -> Result<(), Box<dyn Error>> {
         // Dispatch input events
@@ -233,7 +233,7 @@ pub struct WinitHostWindow {
     title:    String,
     width:    f64,
     height:   f64,
-    window:   Arc<WinitWindow>,
+    window:   WinitWindow,
     closing:  bool,
     rollover: u32,
     surface:  Rc<EGLSurface>,
@@ -301,7 +301,7 @@ impl WinitHostWindow {
         title:  &str,
         width:  f64,
         height: f64
-    ) -> Result<Arc<WinitWindow>, Box<dyn Error>> {
+    ) -> Result<WinitWindow, Box<dyn Error>> {
         debug!(logger, "Building Winit window: {title} ({width}x{height})");
         let window = WindowBuilder::new()
             .with_inner_size(LogicalSize::new(width, height))
@@ -309,7 +309,7 @@ impl WinitHostWindow {
             .with_visible(true)
             .build(events)
             .map_err(WinitError::InitFailed)?;
-        Ok(Arc::new(window))
+        Ok(window)
     }
 
     /// Obtain the window surface (varies on whether winit is running in wayland or x11)
@@ -508,38 +508,9 @@ impl std::fmt::Display for WinitHostError {
 
 impl std::error::Error for WinitHostError {}
 
-use smithay::{
-    delegate_dmabuf,
-    backend::allocator::dmabuf::Dmabuf,
-    reexports::wayland_server::protocol::{
-        wl_buffer::WlBuffer,
-        wl_surface::WlSurface
-    },
-    wayland::{
-        buffer::BufferHandler,
-        dmabuf::{DmabufHandler, DmabufState, DmabufGlobal, ImportError}
-    }
-};
+pub struct WinitHostInput;
 
-//impl BufferHandler for WinitHost {
-    //fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
-//}
-
-//impl DmabufHandler for WinitHost {
-    //fn dmabuf_state(&mut self) -> &mut DmabufState {
-        //&mut self.dmabuf_state
-    //}
-
-    //fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf) -> Result<(), ImportError> {
-        //self.renderer.import_dmabuf(&dmabuf, None).map(|_| ()).map_err(|_| ImportError::Failed)
-    //}
-//}
-
-//delegate_dmabuf!(WinitHost);
-
-pub struct WinitInput;
-
-impl WinitInput {
+impl WinitHostInput {
     pub fn new (name: &str) -> Result<Self, Box<dyn Error>> {
         Ok(Self)
     }
@@ -547,18 +518,16 @@ impl WinitInput {
 
 /// An output bound to a winit host window.
 #[derive(Debug)]
-pub struct WinitOutput {
+pub struct WinitHostOutput {
     /// Which host window contains this output
     id:     WindowId,
     /// Which screen is shown on this output
     screen: ScreenId,
     /// The output
     output: Output,
-    /// Damage tracking
-    damage: DamageTrackedRenderer,
 }
 
-impl WinitOutput {
+impl WinitHostOutput {
 
     /// Create a new host window and attach an output to it.
     fn new (
@@ -584,7 +553,6 @@ impl WinitOutput {
         Ok(Self {
             id: winit_host.window_add(name, 720.0, 540.0)?.id(),
             screen,
-            damage: DamageTrackedRenderer::from_output(&output),
             output,
         })
     }
@@ -593,15 +561,17 @@ impl WinitOutput {
     fn render (
         &mut self,
         winit_host: &mut WinitHost,
-        state:      &mut impl Widget<RenderData=ScreenId>
+        state:      &mut impl Widget<RenderData=WinitRenderData>
     ) -> Result<(), Box<dyn Error>> {
         winit_host.window_render(&self.id, &mut |renderer, size|{
             state.render(RenderContext {
                 output: &self.output,
-                data:   self.screen,
+                data:   (self.screen, size),
                 renderer,
             })
         })
     }
 
 }
+
+type WinitRenderData = (ScreenId, Size<i32, Physical>);

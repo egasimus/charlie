@@ -107,12 +107,12 @@ type ScreenId = usize;
 
 impl Widget for App {
 
-    type RenderData = ScreenId;
+    type RenderData = (ScreenId, Size<i32, Physical>);
 
     fn render <'r> (
         &'r self, context: RenderContext<'r, Self::RenderData>
     ) -> Result<(), Box<dyn Error>> {
-        let RenderContext { renderer, output, data: screen } = context;
+        let RenderContext { renderer, output, data: (screen, screen_size) } = context;
         let (size, transform, scale) = (
             output.current_mode().unwrap().size,
             output.current_transform(),
