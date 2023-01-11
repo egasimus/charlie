@@ -13,7 +13,8 @@ pub(crate) use smithay::{
         utils::{
             on_commit_buffer_handler,
             RendererSurfaceState,
-            RendererSurfaceStateUserData
+            RendererSurfaceStateUserData,
+            SERIAL_COUNTER
         }
     },
     input::{

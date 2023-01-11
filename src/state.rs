@@ -3,6 +3,7 @@ mod wayland;
 mod handle;
 mod window;
 mod pointer;
+mod keyboard;
 mod xwayland;
 
 use self::prelude::*;
@@ -10,18 +11,21 @@ use self::wayland::WaylandListener;
 use self::handle::DelegatedState;
 use self::window::WindowState;
 use self::pointer::Pointer;
+use self::keyboard::Keyboard;
 use self::xwayland::XWaylandState;
 
 pub struct State {
-    logger:  Logger,
-    /// A wayland socket listener
-    wayland: WaylandListener,
-    /// A collection of views into the workspace, bound to engine outputs
-    screens: Vec<ScreenState>,
+    logger: Logger,
     /// A collection of windows that are mapped across the screens
     windows: Vec<WindowState>,
-    /// State of the mouse pointer
-    pub pointer:   Pointer,
+    /// A collection of views into the workspace, bound to engine outputs
+    screens: Vec<ScreenState>,
+    /// State of the mouse pointer(s)
+    pointers: Vec<Pointer>,
+    /// State of the keyboard(s)
+    keyboards: Vec<Keyboard>,
+    /// A wayland socket listener
+    wayland: WaylandListener,
     /// State of the X11 integration.
     pub xwayland:  XWaylandState,
     /// States of smithay-provided implementations of compositor features
@@ -37,10 +41,11 @@ impl State {
             logger:    engine.logger(),
             screens:   vec![],
             windows:   vec![],
-            pointer:   Pointer::new(engine)?,
             wayland:   WaylandListener::new(engine)?,
             xwayland:  XWaylandState::new(engine)?,
             delegated: DelegatedState::new(engine)?,
+            pointers:  vec![],
+            keyboards: vec![],
             startup:   vec![],
         })
     }
@@ -73,12 +78,23 @@ impl State {
     }
 
     /// Add an control seat over the workspace.
-    pub fn seat_add (&mut self, name: impl Into<String>) -> Result<Seat<Self>, Box<dyn Error>> {
+    pub fn seat_add (
+        &mut self,
+        name: impl Into<String>,
+        pointer_image: Gles2Texture,
+    ) -> Result<Seat<Self>, Box<dyn Error>> {
         use smithay::input::keyboard::XkbConfig;
         use smithay::wayland::input_method::InputMethodSeat;
         let mut seat = self.delegated.seat_add(name);
-        seat.add_pointer();
-        seat.add_keyboard(XkbConfig::default(), 200, 25)?;
+        self.pointers.push(Pointer::new(
+            &self.logger,
+            seat.add_pointer(),
+            pointer_image
+        )?);
+        self.keyboards.push(Keyboard::new(
+            &self.logger,
+            seat.add_keyboard(XkbConfig::default(), 200, 25)?
+        ));
         seat.add_input_method(XkbConfig::default(), 200, 25);
         Ok(seat)
     }
@@ -100,7 +116,7 @@ impl State {
 
 type ScreenId = usize;
 
-impl<'a> Widget for State {
+impl Widget for State {
 
     type RenderData = ScreenId;
 
@@ -128,7 +144,9 @@ impl<'a> Widget for State {
             window.render(&self.logger, &mut frame, size)?;
         }
 
-        self.pointer.render(&mut frame, size, &self.screens[screen])?;
+        for pointer in self.pointers.iter() {
+            pointer.render(&mut frame, size, &self.screens[screen])?;
+        }
 
         frame.finish()?;
 
@@ -145,7 +163,19 @@ impl<'a> Widget for State {
     }
 
     fn handle <B: InputBackend> (&mut self, event: InputEvent<B>) {
-        debug!(self.logger, "Received input event")
+        match event {
+            InputEvent::PointerMotion { event, .. }
+                => self.pointers[0].on_move_relative::<B>(event),
+            InputEvent::PointerMotionAbsolute { event, .. }
+                => self.pointers[0].on_move_absolute::<B>(event),
+            InputEvent::PointerButton { event, .. }
+                => self.pointers[0].on_button::<B>(event),
+            InputEvent::PointerAxis { event, .. }
+                => self.pointers[0].on_axis::<B>(event),
+            InputEvent::Keyboard { event, .. }
+                => self.keyboards[0].on_keyboard::<B>(event),
+            _ => {}
+        }
     }
 
 }

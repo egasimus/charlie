@@ -1,14 +1,23 @@
 use super::prelude::*;
 
-use smithay::input::{
-    pointer::{
-        CursorImageStatus as Status,
-        CursorImageAttributes as Attributes
+use smithay::{
+    backend::input::{
+        AbsolutePositionEvent,
+        PointerMotionEvent,
+        PointerAxisEvent
+    },
+    input::{
+        pointer::{
+            PointerHandle,
+            CursorImageStatus     as Status,
+            CursorImageAttributes as Attributes
+        }
     }
 };
 
 pub struct Pointer {
     logger:        Logger,
+    pointer:       PointerHandle<State>
     pub texture:   Gles2Texture,
     status:        Arc<Mutex<Status>>,
     position:      Point<f64, Logical>,
@@ -16,15 +25,22 @@ pub struct Pointer {
 }
 
 impl Pointer {
-    pub fn new (engine: &mut impl Engine<State>) -> Result<Self, Box<dyn Error>> {
+
+    pub fn new (
+        logger:  &Logger,
+        pointer: PointerHandle<State>,
+        texture: Gles2Texture
+    ) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
-            logger:        engine.logger(),
-            texture:       import_bitmap(engine.renderer(), "data/cursor.png")?,
+            logger:        logger.clone(),
             status:        Arc::new(Mutex::new(Status::Default)),
             position:      (100.0, 30.0).into(),
-            last_position: (0.0, 0.0).into(),
+            last_position: (100.0, 30.0).into(),
+            pointer,
+            texture,
         })
     }
+
     fn status (&self) -> (bool, Point<f64, Logical>) {
         let mut reset = false;
         let mut guard = self.status.lock().unwrap();
@@ -45,6 +61,7 @@ impl Pointer {
         let position = self.position - hotspot.to_f64();
         (visible, position)
     }
+
     pub fn render (
         &self,
         frame:  &mut Gles2Frame,
@@ -69,6 +86,98 @@ impl Pointer {
             1.0
         )?)
     }
+
+    pub fn on_move_relative<B: InputBackend>(&mut self, evt: B::PointerMotionEvent) {
+        let delta = evt.delta();
+        panic!("{:?}", delta);
+    }
+
+    pub fn on_move_absolute<B: InputBackend>(&mut self, evt: B::PointerMotionAbsoluteEvent) {
+        self.last_position = self.position;
+        self.position = evt.position_transformed(
+            self.compositor.borrow().find_by_name(OUTPUT_NAME)
+                .map(|o| o.size()).unwrap());
+        self.workspace.borrow_mut()
+            .on_move_absolute(self.pointer_location, self.last_pointer_location);
+        let pos    = self.pointer_location - self.workspace.borrow().offset.to_logical(1.0);
+        let under  = self.compositor.borrow().window_map.borrow().get_surface_under(pos);
+        self.pointer.motion(
+            self.position,
+            under,
+            SERIAL_COUNTER.next_serial(),
+            evt.time()
+        );
+    }
+
+    pub fn on_button<B: InputBackend>(&mut self, evt: B::PointerButtonEvent) {
+        let serial = SCOUNTER.next_serial();
+        let button = match evt.button() {
+            MouseButton::Left => 0x110,
+            MouseButton::Right => 0x111,
+            MouseButton::Middle => 0x112,
+            MouseButton::Other(b) => b as u32,
+        };
+        let state = match evt.state() {
+            ButtonState::Pressed => {
+                // change the keyboard focus unless the pointer is grabbed
+                if !self.pointer.is_grabbed() {
+                    let pos   = self.pointer_location - self.workspace.borrow().offset.to_logical(1.0);
+                    let under = self.compositor.borrow().window_map.borrow().get_surface_under(pos);
+                    if under.is_some() {
+                        let under = self.compositor.borrow().window_map.borrow_mut()
+                            .get_surface_and_bring_to_top(pos);
+                        self.keyboard
+                            .set_focus(under.as_ref().map(|&(ref s, _)| s), serial);
+                    } else {
+                        self.workspace.borrow_mut().dragging = true;
+                    }
+                }
+                wl_pointer::ButtonState::Pressed
+            }
+            ButtonState::Released => {
+                self.workspace.borrow_mut().dragging = false;
+                wl_pointer::ButtonState::Released
+            },
+        };
+        self.pointer.button(button, state, serial, evt.time());
+    }
+
+    pub fn on_axis<B: InputBackend>(&mut self, evt: B::PointerAxisEvent) {
+        let source = match evt.source() {
+            AxisSource::Continuous => wl_pointer::AxisSource::Continuous,
+            AxisSource::Finger => wl_pointer::AxisSource::Finger,
+            AxisSource::Wheel | AxisSource::WheelTilt => wl_pointer::AxisSource::Wheel,
+        };
+
+        let mut frame = AxisFrame::new(evt.time()).source(source);
+
+        let horizontal_amount = evt.amount(Axis::Horizontal)
+            .unwrap_or_else(|| evt.amount_discrete(Axis::Horizontal).unwrap() * 3.0);
+        let horizontal_amount_discrete = evt.amount_discrete(Axis::Horizontal);
+        if horizontal_amount != 0.0 {
+            frame = frame.value(wl_pointer::Axis::HorizontalScroll, horizontal_amount);
+            if let Some(discrete) = horizontal_amount_discrete {
+                frame = frame.discrete(wl_pointer::Axis::HorizontalScroll, discrete as i32);
+            }
+        } else if source == wl_pointer::AxisSource::Finger {
+            frame = frame.stop(wl_pointer::Axis::HorizontalScroll);
+        }
+
+        let vertical_amount = evt.amount(Axis::Vertical)
+            .unwrap_or_else(|| evt.amount_discrete(Axis::Vertical).unwrap() * 3.0);
+        let vertical_amount_discrete = evt.amount_discrete(Axis::Vertical);
+        if vertical_amount != 0.0 {
+            frame = frame.value(wl_pointer::Axis::VerticalScroll, vertical_amount);
+            if let Some(discrete) = vertical_amount_discrete {
+                frame = frame.discrete(wl_pointer::Axis::VerticalScroll, discrete as i32);
+            }
+        } else if source == wl_pointer::AxisSource::Finger {
+            frame = frame.stop(wl_pointer::Axis::VerticalScroll);
+        }
+
+        self.pointer.axis(frame);
+    }
+
 }
 
 pub struct MoveSurfaceGrab {

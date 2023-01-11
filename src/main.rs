@@ -17,6 +17,6 @@ fn main () -> Result<(), Box<dyn Error>> {
     state.startup_add("wezterm", &[]);
     engine.output_add("Alice", state.screen_add(ScreenState::new((-100.0, 0.0), (0.0, 0.0))))?;
     engine.output_add("Bob", state.screen_add(ScreenState::new(( 100.0, 0.0), (0.0, 0.0))))?;
-    state.seat_add("Charlie")?;
+    state.seat_add("Charlie", import_bitmap(engine.renderer(), "data/cursor.png")?)?;
     engine.start(&mut state)
 }
