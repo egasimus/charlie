@@ -30,38 +30,32 @@ use smithay::reexports::winit::{
 
 use wayland_egl as wegl;
 
+type ScreenId = usize;
+
+type WinitRenderData = (ScreenId, Size<i32, Physical>);
+
+/// Contains the winit and wayland event loops, spawns one or more windows,
+/// and dispatches events to them.
 pub struct WinitEngine<W: 'static> {
-    logger:        Logger,
-    running:       Arc<AtomicBool>,
-    events:        EventLoop<'static, W>,
-    display:       Rc<RefCell<Display<W>>>,
-    winit_host:    WinitHost,
-    winit_outputs: Vec<WinitHostOutput>,
-    winit_inputs:  Vec<WinitHostInput>
+    logger:       Logger,
+    running:      Arc<AtomicBool>,
+    started:      Option<Instant>,
+    events:       EventLoop<'static, W>,
+    winit_events: WinitEventLoop<()>,
+    display:      Rc<RefCell<Display<W>>>,
+    egl_display:  EGLDisplay,
+    egl_context:  EGLContext,
+    renderer:     Gles2Renderer,
+    outputs:      HashMap<WindowId, WinitHostWindow>,
 }
 
 impl<W> Stoppable for WinitEngine<W> {
+
     fn running (&self) -> &Arc<AtomicBool> {
         &self.running
     }
-}
 
-impl<W: Widget> WinitEngine<W> {
-    pub fn new (logger: &Logger) -> Result<Self, Box<dyn Error>> {
-        debug!(logger, "Starting Winit engine");
-        Ok(Self {
-            logger:  logger.clone(),
-            running: Arc::new(AtomicBool::new(true)),
-            events:  EventLoop::try_new()?,
-            display: Rc::new(RefCell::new(Display::new()?)),
-            winit_host:    WinitHost::new(logger)?,
-            winit_inputs:  vec![],
-            winit_outputs: vec![]
-        })
-    }
 }
-
-type ScreenId = usize;
 
 impl<W> Engine for WinitEngine<W> where W: Widget<RenderData=WinitRenderData> {
 
@@ -70,79 +64,84 @@ impl<W> Engine for WinitEngine<W> where W: Widget<RenderData=WinitRenderData> {
     fn logger (&self) -> Logger {
         self.logger.clone()
     }
+
     fn display (&self) -> &Rc<RefCell<Display<W>>> {
         &self.display
     }
+
     fn events (&self) -> &EventLoop<'static, W> {
         &self.events
     }
+
     fn renderer (&mut self) -> &mut Gles2Renderer {
-        self.winit_host.renderer()
+        &mut self.renderer
     }
+
     fn output_add (&mut self, name: &str, screen: ScreenId) -> Result<(), Box<dyn Error>> {
-        Ok(self.winit_outputs.push(WinitHostOutput::new(name, &mut self.winit_host, screen)?))
+        let window = WinitHostWindow::new(
+            &self.logger, &self.winit_events, &Self::make_context(&self.logger, &self.egl_context)?,
+            &format!("Output {screen}"), 720.0, 540.0,
+            screen
+        )?;
+        let window_id = window.id();
+        self.outputs.insert(window_id, window);
+        Ok(())
     }
+
     fn input_add (&mut self, name: &str) -> Result<(), Box<dyn Error>> {
-        Ok(self.winit_inputs.push(WinitHostInput::new(name)?))
+        Ok(())
     }
-    fn tick (&mut self, widget: &mut W) -> Result<(), Box<dyn Error>> {
+
+    fn tick (&mut self, state: &mut W) -> Result<(), Box<dyn Error>> {
         // Dispatch input events
-        self.winit_host.dispatch(|/*window_id,*/ event| match event {
+        self.dispatch(|event| match event {
             WinitEvent::Resized { size, scale_factor } => {
                 //panic!("host resize unsupported");
             }
             WinitEvent::Input(event) => {
-                widget.handle(event)
+                state.handle(event)
             }
             _ => (),
         })?;
         // Render each output
-        for output in self.winit_outputs.iter_mut() {
-            output.render(&mut self.winit_host, widget)?;
+        for (_, output) in self.outputs.iter() {
+            output.render(&mut self.renderer, state)?;
         }
         // Advance the event loop
-        self.events.dispatch(Some(Duration::from_millis(1)), widget)?;
-        widget.refresh()?;
+        self.events.dispatch(Some(Duration::from_millis(1)), state)?;
+        state.refresh()?;
         Ok(self.display.borrow_mut().flush_clients()?)
     }
+
 }
 
-/// Contains the main event loop, spawns one or more windows, and dispatches events to them.
-pub struct WinitHost {
-    pub logger: Logger,
-    events:      WinitEventLoop<()>,
-    started:     Option<Instant>,
-    egl_display: EGLDisplay,
-    egl_context: EGLContext,
-    renderer:    Gles2Renderer,
-    damage:      bool,
-    windows:     HashMap<WindowId, WinitHostWindow>
-}
-
-impl WinitHost {
+impl<W: Widget + 'static> WinitEngine<W> {
 
     pub fn new (logger: &Logger) -> Result<Self, Box<dyn Error>> {
-        debug!(logger, "Initializing Winit event loop");
-        let events = WinitEventLoop::new();
+        debug!(logger, "Starting Winit engine");
+        let winit_events = WinitEventLoop::new();
         let window = Arc::new(WindowBuilder::new() // Null window to host the EGLDisplay
             .with_inner_size(LogicalSize::new(16, 16))
             .with_title("Charlie Null")
             .with_visible(false)
-            .build(&events)
+            .build(&winit_events)
             .map_err(WinitError::InitFailed)?);
         let egl_display = EGLDisplay::new(window, logger.clone()).unwrap();
         let egl_context = EGLContext::new_with_config(&egl_display, GlAttributes {
             version: (3, 0), profile: None, vsync: true, debug: cfg!(debug_assertions),
         }, Default::default(), logger.clone())?;
+        let renderer = Self::make_renderer(logger, &egl_context)?;
         Ok(Self {
-            logger:  logger.clone(),
-            events,
-            damage: egl_display.supports_damage(),
+            logger:       logger.clone(),
+            running:      Arc::new(AtomicBool::new(true)),
+            started:      None,
+            events:       EventLoop::try_new()?,
+            winit_events,
+            display:      Rc::new(RefCell::new(Display::new()?)),
             egl_display,
-            renderer: Self::make_renderer(logger, &egl_context)?,
             egl_context,
-            started: None,
-            windows: HashMap::new()
+            renderer,
+            outputs:      HashMap::new(),
         })
     }
 
@@ -157,32 +156,8 @@ impl WinitHost {
         Ok(unsafe { Gles2Renderer::new(egl, logger.clone()) }?)
     }
 
-    pub fn renderer (&mut self) -> &mut Gles2Renderer {
-        &mut self.renderer
-    }
-
-    pub fn window_add (
-        &mut self, title: &str, width: f64, height: f64
-    ) -> Result<&mut WinitHostWindow, Box<dyn Error>> {
-        let egl = Self::make_context(&self.logger, &self.egl_context)?;
-        let window = WinitHostWindow::new(&self.logger, &self.events, &egl, title, width, height)?;
-        let window_id = window.id();
-        self.windows.insert(window_id, window);
-        Ok(self.window_get(&window_id))
-    }
-
     pub fn window_get (&mut self, window_id: &WindowId) -> &mut WinitHostWindow {
-        self.windows.get_mut(&window_id).unwrap()
-    }
-
-    pub fn window_render (
-        &mut self,
-        window_id: &WindowId,
-        render: &mut impl FnMut(&mut Gles2Renderer, Size<i32, Physical>)->Result<(), Box<dyn Error>>
-    ) -> Result<(), Box<dyn Error>> {
-        let renderer = &mut self.renderer;
-        let window   = self.windows.get_mut(&window_id).unwrap();
-        window.render(renderer, render)
+        self.outputs.get_mut(&window_id).unwrap()
     }
 
     pub fn dispatch (&mut self, mut callback: impl FnMut(WinitEvent))
@@ -196,20 +171,19 @@ impl WinitHost {
         }
         let started = &self.started.unwrap();
         let logger  = &self.logger;
-        let events  = &mut self.events;
-        let windows = &mut self.windows;
-        events.run_return(move |event, _target, control_flow| match event {
+        let outputs = &mut self.outputs;
+        self.winit_events.run_return(move |event, _target, control_flow| { match event {
             Event::RedrawEventsCleared => {
                 *control_flow = ControlFlow::Exit;
             }
             Event::RedrawRequested(_id) => {
                 callback(WinitEvent::Refresh);
             }
-            Event::WindowEvent { window_id, event } => match windows.get_mut(&window_id) {
+            Event::WindowEvent { window_id, event } => match outputs.get_mut(&window_id) {
                 Some(window) => {
                     window.dispatch(started, event, &mut callback);
                     if window.closing {
-                        windows.remove(&window_id);
+                        outputs.remove(&window_id);
                         closed = true;
                     }
                 },
@@ -218,7 +192,7 @@ impl WinitHost {
                 }
             }
             _ => {}
-        });
+        }});
         if closed {
             Err(WinitHostError::WindowClosed)
         } else {
@@ -228,6 +202,7 @@ impl WinitHost {
 
 }
 
+#[derive(Debug)]
 pub struct WinitHostWindow {
     logger:   Logger,
     title:    String,
@@ -240,6 +215,10 @@ pub struct WinitHostWindow {
     resized:  Rc<Cell<Option<Size<i32, Physical>>>>,
     size:     Rc<RefCell<WindowSize>>,
     is_x11:   bool,
+    /// Which viewport is rendered to this window
+    screen:   ScreenId,
+    /// The wayland output
+    output:   Output,
 }
 
 impl WinitHostWindow {
@@ -251,10 +230,24 @@ impl WinitHostWindow {
         egl:    &EGLContext,
         title:  &str,
         width:  f64,
-        height: f64
+        height: f64,
+        screen: ScreenId
     ) -> Result<Self, Box<dyn Error>> {
+
+        let (w, h, hz, subpixel) = (720, 540, 60_000, Subpixel::Unknown);
+
+        let output = Output::new(title.to_string(), PhysicalProperties {
+            size: (w, h).into(), subpixel, make: "Smithay".into(), model: "Winit".into()
+        }, logger.clone());
+
+        output.change_current_state(
+            Some(Mode { size: (w, h).into(), refresh: hz }), None, None, None
+        );
+
         let window = Self::build(logger, events, title, width, height)?;
+
         let (w, h): (u32, u32) = window.inner_size().into();
+
         Ok(Self {
             logger:   logger.clone(),
             title:    title.into(),
@@ -270,6 +263,8 @@ impl WinitHostWindow {
             surface: Self::surface(logger, egl, &window)?,
             is_x11:  window.wayland_surface().is_none(),
             window,
+            screen,
+            output
         })
     }
 
@@ -278,18 +273,20 @@ impl WinitHostWindow {
         self.window.id()
     }
 
-    /// Render something inside the window
+    /// Render this output into its corresponding host window
     pub fn render (
-        &mut self,
+        &self,
         renderer: &mut Gles2Renderer,
-        render:   &mut impl FnMut(&mut Gles2Renderer, Size<i32, Physical>)->Result<(), Box<dyn Error>>
+        state:    &mut impl Widget<RenderData=WinitRenderData>
     ) -> Result<(), Box<dyn Error>> {
         if let Some(size) = self.resized.take() {
             self.surface.resize(size.w, size.h, 0, 0);
         }
         renderer.bind(self.surface.clone())?;
         let size = self.surface.get_size().unwrap();
-        render(renderer, size)?;
+        state.render(RenderContext {
+            renderer, output: &self.output, data: (self.screen, size)
+        })?;
         self.surface.swap_buffers(None)?;
         Ok(())
     }
@@ -373,6 +370,7 @@ impl WinitHostWindow {
         event:    WindowEvent,
         callback: &mut impl FnMut(WinitEvent)
     ) -> () {
+        debug!(self.logger, "Winit Window Event: {self:?} {event:?}");
         let duration = Instant::now().duration_since(*started);
         let nanos = duration.subsec_nanos() as u64;
         let time = ((1000 * duration.as_secs()) + (nanos / 1_000_000)) as u32;
@@ -507,71 +505,3 @@ impl std::fmt::Display for WinitHostError {
 }
 
 impl std::error::Error for WinitHostError {}
-
-pub struct WinitHostInput;
-
-impl WinitHostInput {
-    pub fn new (name: &str) -> Result<Self, Box<dyn Error>> {
-        Ok(Self)
-    }
-}
-
-/// An output bound to a winit host window.
-#[derive(Debug)]
-pub struct WinitHostOutput {
-    /// Which host window contains this output
-    id:     WindowId,
-    /// Which screen is shown on this output
-    screen: ScreenId,
-    /// The output
-    output: Output,
-}
-
-impl WinitHostOutput {
-
-    /// Create a new host window and attach an output to it.
-    fn new (
-        name:       &str,
-        winit_host: &mut WinitHost,
-        screen:     ScreenId,
-    ) -> Result<Self, Box<dyn Error>> {
-        let w = 720;
-        let h = 540;
-        let hz = 60_000;
-        let output = Output::new(name.to_string(), PhysicalProperties {
-            size:     (w, h).into(),
-            subpixel: Subpixel::Unknown,
-            make:     "Smithay".into(),
-            model:    "Winit".into()
-        }, winit_host.logger.clone());
-        output.change_current_state(
-            Some(Mode { size: (w, h).into(), refresh: hz }),
-            None,
-            None,
-            None
-        );
-        Ok(Self {
-            id: winit_host.window_add(name, 720.0, 540.0)?.id(),
-            screen,
-            output,
-        })
-    }
-
-    /// Render this output into its corresponding host window
-    fn render (
-        &mut self,
-        winit_host: &mut WinitHost,
-        state:      &mut impl Widget<RenderData=WinitRenderData>
-    ) -> Result<(), Box<dyn Error>> {
-        winit_host.window_render(&self.id, &mut |renderer, size|{
-            state.render(RenderContext {
-                output: &self.output,
-                data:   (self.screen, size),
-                renderer,
-            })
-        })
-    }
-
-}
-
-type WinitRenderData = (ScreenId, Size<i32, Physical>);
