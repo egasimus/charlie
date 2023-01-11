@@ -50,7 +50,8 @@ impl Keyboard {
     pub fn on_key <B: InputBackend> (
         state: &mut AppState,
         index: usize,
-        event: B::KeyboardKeyEvent
+        event: B::KeyboardKeyEvent,
+        screen_id: usize
     ) {
         let key_code   = event.key_code();
         let key_state  = event.state();

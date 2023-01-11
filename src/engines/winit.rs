@@ -100,12 +100,12 @@ impl<W> Engine for WinitEngine<W> where W: Widget<RenderData=WinitRenderData> {
 
     fn tick (&mut self, state: &mut W) -> Result<(), Box<dyn Error>> {
         // Dispatch input events
-        self.dispatch(|event| match event {
+        self.dispatch(|screen_id, event| match event {
             WinitEvent::Resized { size, scale_factor } => {
                 //panic!("host resize unsupported");
             }
             WinitEvent::Input(event) => {
-                state.handle(event)
+                state.update(screen_id, event)
             }
             _ => (),
         })?;
@@ -166,13 +166,13 @@ impl<W: Widget + 'static> WinitEngine<W> {
         self.outputs.get_mut(&window_id).unwrap()
     }
 
-    pub fn dispatch (&mut self, mut callback: impl FnMut(WinitEvent))
+    pub fn dispatch (&mut self, mut callback: impl FnMut(ScreenId, WinitEvent))
         -> Result<(), WinitHostError>
     {
         let mut closed = false;
         if self.started.is_none() {
             let event = InputEvent::DeviceAdded { device: WinitVirtualDevice };
-            callback(WinitEvent::Input(event));
+            callback(0, WinitEvent::Input(event));
             self.started = Some(Instant::now());
         }
         let started = &self.started.unwrap();
@@ -185,7 +185,7 @@ impl<W: Widget + 'static> WinitEngine<W> {
                     *control_flow = ControlFlow::Exit;
                 }
                 Event::RedrawRequested(_id) => {
-                    callback(WinitEvent::Refresh);
+                    callback(0, WinitEvent::Refresh);
                 }
                 Event::WindowEvent { window_id, event } => match outputs.get_mut(&window_id) {
                     Some(window) => {
@@ -377,7 +377,7 @@ impl WinitHostWindow {
         &mut self,
         started:  &Instant,
         event:    WindowEvent,
-        callback: &mut impl FnMut(WinitEvent)
+        callback: &mut impl FnMut(ScreenId, WinitEvent)
     ) -> () {
         //debug!(self.logger, "Winit Window Event: {self:?} {event:?}");
         let duration = Instant::now().duration_since(*started);
@@ -393,14 +393,14 @@ impl WinitHostWindow {
                 wsize.physical_size = (pw as i32, ph as i32).into();
                 wsize.scale_factor  = scale_factor;
                 self.resized.set(Some(wsize.physical_size));
-                callback(WinitEvent::Resized {
+                callback(self.screen, WinitEvent::Resized {
                     size: wsize.physical_size,
                     scale_factor,
                 });
             }
 
             WindowEvent::Focused(focus) => {
-                callback(WinitEvent::Focus(focus));
+                callback(self.screen, WinitEvent::Focus(focus));
             }
 
             WindowEvent::ScaleFactorChanged { scale_factor, new_inner_size, } => {
@@ -408,7 +408,7 @@ impl WinitHostWindow {
                 wsize.scale_factor = scale_factor;
                 let (pw, ph): (u32, u32) = (*new_inner_size).into();
                 self.resized.set(Some((pw as i32, ph as i32).into()));
-                callback(WinitEvent::Resized {
+                callback(self.screen, WinitEvent::Resized {
                     size: (pw as i32, ph as i32).into(),
                     scale_factor: wsize.scale_factor,
                 });
@@ -422,7 +422,7 @@ impl WinitHostWindow {
                         self.rollover = self.rollover.checked_sub(1).unwrap_or(0)
                     }
                 };
-                callback(WinitEvent::Input(InputEvent::Keyboard {
+                callback(self.screen, WinitEvent::Input(InputEvent::Keyboard {
                     event: WinitKeyboardInputEvent {
                         time, key: scancode, count: self.rollover, state,
                     },
@@ -431,7 +431,7 @@ impl WinitHostWindow {
 
             WindowEvent::CursorMoved { position, .. } => {
                 let lpos = position.to_logical(self.size.borrow().scale_factor);
-                callback(WinitEvent::Input(InputEvent::PointerMotionAbsolute {
+                callback(self.screen, WinitEvent::Input(InputEvent::PointerMotionAbsolute {
                     event: WinitMouseMovedEvent {
                         size: self.size.clone(), time, logical_position: lpos,
                     },
@@ -440,11 +440,11 @@ impl WinitHostWindow {
 
             WindowEvent::MouseWheel { delta, .. } => {
                 let event = WinitMouseWheelEvent { time, delta };
-                callback(WinitEvent::Input(InputEvent::PointerAxis { event }));
+                callback(self.screen, WinitEvent::Input(InputEvent::PointerAxis { event }));
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
-                callback(WinitEvent::Input(InputEvent::PointerButton {
+                callback(self.screen, WinitEvent::Input(InputEvent::PointerButton {
                     event: WinitMouseInputEvent {
                         time, button, state, is_x11: self.is_x11,
                     },
@@ -453,7 +453,7 @@ impl WinitHostWindow {
 
             WindowEvent::Touch(Touch { phase: TouchPhase::Started, location, id, .. }) => {
                 let location = location.to_logical(self.size.borrow().scale_factor);
-                callback(WinitEvent::Input(InputEvent::TouchDown {
+                callback(self.screen, WinitEvent::Input(InputEvent::TouchDown {
                     event: WinitTouchStartedEvent {
                         size: self.size.clone(), time, location, id,
                     },
@@ -462,7 +462,7 @@ impl WinitHostWindow {
 
             WindowEvent::Touch(Touch { phase: TouchPhase::Moved, location, id, .. }) => {
                 let location = location.to_logical(self.size.borrow().scale_factor);
-                callback(WinitEvent::Input(InputEvent::TouchMotion {
+                callback(self.screen, WinitEvent::Input(InputEvent::TouchMotion {
                     event: WinitTouchMovedEvent {
                         size: self.size.clone(), time, location, id,
                     },
@@ -471,24 +471,24 @@ impl WinitHostWindow {
 
             WindowEvent::Touch(Touch { phase: TouchPhase::Ended, location, id, .. }) => {
                 let location = location.to_logical(self.size.borrow().scale_factor);
-                callback(WinitEvent::Input(InputEvent::TouchMotion {
+                callback(self.screen, WinitEvent::Input(InputEvent::TouchMotion {
                     event: WinitTouchMovedEvent {
                         size: self.size.clone(), time, location, id,
                     },
                 }));
-                callback(WinitEvent::Input(InputEvent::TouchUp {
+                callback(self.screen, WinitEvent::Input(InputEvent::TouchUp {
                     event: WinitTouchEndedEvent { time, id },
                 }))
             }
 
             WindowEvent::Touch(Touch { phase: TouchPhase::Cancelled, id, .. }) => {
-                callback(WinitEvent::Input(InputEvent::TouchCancel {
+                callback(self.screen, WinitEvent::Input(InputEvent::TouchCancel {
                     event: WinitTouchCancelledEvent { time, id },
                 }));
             }
 
             WindowEvent::CloseRequested | WindowEvent::Destroyed => {
-                callback(WinitEvent::Input(InputEvent::DeviceRemoved {
+                callback(self.screen, WinitEvent::Input(InputEvent::DeviceRemoved {
                     device: WinitVirtualDevice,
                 }));
                 warn!(self.logger, "Window closed");

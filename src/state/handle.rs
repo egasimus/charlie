@@ -53,7 +53,7 @@ impl XdgShellHandler for AppState {
     fn new_toplevel (&mut self, surface: ToplevelSurface) {
         debug!(self.logger, "New toplevel surface: {surface:?}");
         surface.send_configure();
-        self.desktop.borrow_mut().window_add(Window::new(Kind::Xdg(surface)));
+        self.desktop.window_add(Window::new(Kind::Xdg(surface)));
     }
 
     fn new_popup (&mut self, surface: PopupSurface, positioner: PositionerState) {
@@ -183,7 +183,7 @@ impl CompositorHandler for AppState {
                 None => break
             }
         }
-        if let Some(window) = self.desktop.borrow().window_find(&surface) {
+        if let Some(window) = self.desktop.window_find(&surface) {
             window.on_commit();
         } else {
             warn!(self.logger, "could not find window for root toplevel surface {surface:?}");

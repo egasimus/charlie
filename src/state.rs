@@ -21,25 +21,6 @@ pub struct App<S> {
     state:  S,
 }
 
-/// Contains the compositor state.
-pub struct AppState {
-    logger:        Logger,
-    /// A wayland socket listener
-    wayland:       WaylandListener,
-    /// State of the X11 integration.
-    pub xwayland:  XWaylandState,
-    /// States of smithay-provided implementations of compositor features
-    pub delegated: DelegatedState,
-    /// Commands to run after successful initialization
-    startup:       Vec<(String, Vec<String>)>,
-    /// The collection of windows and their layouts
-    desktop:       Rc<RefCell<Desktop>>,
-    /// State of the mouse pointer(s)
-    pointers:      Vec<Pointer>,
-    /// State of the keyboard(s)
-    keyboards:     Vec<Keyboard>,
-}
-
 impl App<AppState> {
 
     /// Create a new application instance.
@@ -63,7 +44,7 @@ impl App<AppState> {
 
     /// Add a viewport into the workspace.
     pub fn output (&mut self, name: &str, w: i32, h: i32, x: f64, y: f64) -> Result<&mut Self, Box<dyn Error>> {
-        let screen = self.state.desktop.borrow_mut().screen_add(ScreenState::new((x, y), (w as f64, h as f64)));
+        let screen = self.state.desktop.screen_add(ScreenState::new((x, y), (w as f64, h as f64)));
         self.engine.output_add(name, screen, w, h)?;
         Ok(self)
     }
@@ -94,6 +75,25 @@ impl App<AppState> {
 
 }
 
+/// Contains the compositor state.
+pub struct AppState {
+    logger:        Logger,
+    /// A wayland socket listener
+    wayland:       WaylandListener,
+    /// State of the X11 integration.
+    pub xwayland:  XWaylandState,
+    /// States of smithay-provided implementations of compositor features
+    pub delegated: DelegatedState,
+    /// Commands to run after successful initialization
+    startup:       Vec<(String, Vec<String>)>,
+    /// The collection of windows and their layouts
+    pub desktop:   Desktop,
+    /// State of the mouse pointer(s)
+    pointers:      Vec<Pointer>,
+    /// State of the keyboard(s)
+    keyboards:     Vec<Keyboard>,
+}
+
 impl AppState {
 
     pub fn new (engine: &mut impl Engine<State=Self>) -> Result<Self, Box<dyn Error>> {
@@ -102,7 +102,7 @@ impl AppState {
             wayland:   WaylandListener::new(engine)?,
             xwayland:  XWaylandState::new(engine)?,
             delegated: DelegatedState::new(engine)?,
-            desktop:   Rc::new(RefCell::new(Desktop::new(engine))),
+            desktop:   Desktop::new(engine),
             pointers:  vec![],
             keyboards: vec![],
             startup:   vec![],
@@ -133,40 +133,39 @@ impl Widget for AppState {
         &'r self, context: RenderContext<'r, Self::RenderData>
     ) -> Result<(), Box<dyn Error>> {
         let AppState { desktop, pointers, delegated, .. } = &self;
-        let RenderContext { renderer, output, data: (screen, screen_size) } = context;
+        let RenderContext { renderer, output, data: (screen_id, screen_size) } = context;
         let (size, transform, scale) = (
             output.current_mode().unwrap().size,
             output.current_transform(),
             output.current_scale()
         );
-        let desktop = desktop.borrow_mut();
         desktop.import(renderer)?;
         let mut frame = renderer.render(size, Transform::Flipped180)?;
         frame.clear([0.2,0.3,0.4,1.0], &[Rectangle::from_loc_and_size((0, 0), size)])?;
-        desktop.render(&mut frame, size)?;
+        desktop.render(&mut frame, screen_id, size)?;
         for pointer in pointers.iter() {
-            pointer.render(&mut frame, size, &desktop.screens[screen])?;
+            pointer.render(&mut frame, size, &desktop.screens[screen_id])?;
         }
         frame.finish()?;
         desktop.tick(output, delegated.clock.now());
         Ok(())
     }
 
-    fn handle <B: InputBackend> (&mut self, event: InputEvent<B>) {
+    fn update <B: InputBackend> (&mut self, screen_id: ScreenId, event: InputEvent<B>) {
         //let state    = &mut self.state;
         //let pointer  = &self.state.pointers[0];
         //let keyboard = &self.state.keyboards[0];
         match event {
             InputEvent::PointerMotion { event, .. }
-                => Pointer::on_move_relative::<B>(self, 0, event),
+                => Pointer::on_move_relative::<B>(self, 0, event, screen_id),
             InputEvent::PointerMotionAbsolute { event, .. }
-                => Pointer::on_move_absolute::<B>(self, 0, event),
+                => Pointer::on_move_absolute::<B>(self, 0, event, screen_id),
             InputEvent::PointerButton { event, .. }
-                => Pointer::on_button::<B>(self, 0, event),
+                => Pointer::on_button::<B>(self, 0, event, screen_id),
             InputEvent::PointerAxis { event, .. }
-                => Pointer::on_axis::<B>(self, 0, event),
+                => Pointer::on_axis::<B>(self, 0, event, screen_id),
             InputEvent::Keyboard { event, .. }
-                => Keyboard::on_key::<B>(self, 0, event),
+                => Keyboard::on_key::<B>(self, 0, event, screen_id),
             _ => {}
         }
     }

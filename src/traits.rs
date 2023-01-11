@@ -15,7 +15,7 @@ pub trait Widget {
         Ok(())
     }
 
-    fn handle <B: InputBackend> (&mut self, event: InputEvent<B>);
+    fn update <B: InputBackend> (&mut self, screen_id: usize, event: InputEvent<B>);
 
 }
 

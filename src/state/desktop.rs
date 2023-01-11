@@ -46,9 +46,9 @@ impl Desktop {
         Ok(())
     }
 
-    pub fn render (&self, frame: &mut Gles2Frame, size: Size<i32, Physical>) -> Result<(), Box<dyn Error>> {
+    pub fn render (&self, frame: &mut Gles2Frame, screen_id: usize, size: Size<i32, Physical>) -> Result<(), Box<dyn Error>> {
         for window in self.windows.iter() {
-            window.render(&self.logger, frame, size)?;
+            window.render(&self.logger, frame, self.screens[screen_id].center, size)?;
         }
         Ok(())
     }
@@ -67,7 +67,7 @@ impl Desktop {
 }
 
 pub struct ScreenState {
-    center: Point<f64, Logical>,
+    pub center: Point<f64, Logical>,
     size:   Size<f64, Logical>
 }
 
@@ -144,12 +144,21 @@ impl WindowState {
     }
 
     /// Render the window's imported texture into the current frame
-    pub fn render (&self, logger: &Logger, frame: &mut Gles2Frame, size: Size<i32, Physical>)
+    pub fn render (
+        &self,
+        logger: &Logger,
+        frame:  &mut Gles2Frame,
+        offset: Point<f64, Logical>,
+        size:   Size<i32, Physical>
+    )
         -> Result<(), Box<dyn Error>>
     {
         let (src, dest, damage): (Rectangle<f64, Buffer>, Rectangle<i32, Physical>, Rectangle<i32, Physical>) = (
             Rectangle::from_loc_and_size((0.0, 0.0), (size.w as f64, size.h as f64)),
-            Rectangle::from_loc_and_size((20, 10), size),
+            Rectangle::from_loc_and_size((
+                self.center.x as i32 + offset.x as i32,
+                self.center.y as i32 + offset.y as i32
+            ), size),
             Rectangle::from_loc_and_size((0, 0), size)
         );
         let surface = match self.window.toplevel() {

@@ -94,7 +94,8 @@ impl Pointer {
     pub fn on_move_relative<B: InputBackend>(
         state: &mut AppState,
         index: usize,
-        event: B::PointerMotionEvent
+        event: B::PointerMotionEvent,
+        screen_id: usize
     ) {
         let delta = event.delta();
         panic!("{:?}", delta);
@@ -103,16 +104,25 @@ impl Pointer {
     pub fn on_move_absolute<B: InputBackend>(
         state: &mut AppState,
         index: usize,
-        event: B::PointerMotionAbsoluteEvent
+        event: B::PointerMotionAbsoluteEvent,
+        screen_id: usize
     ) {
         let pointer = &mut state.pointers[index];
         pointer.last_location = pointer.location;
         pointer.location = (event.x(), event.y()).into();
-        pointer.pointer.clone().motion(state, None, &MotionEvent {
-            location: (event.x(), event.y()).into(),
-            serial: SERIAL_COUNTER.next_serial(),
-            time: event.time()
-        })
+        if pointer.held {
+            crit!(state.logger, "CLECK! {screen_id}");
+            let dx = pointer.location.x - pointer.last_location.x;
+            let dy = pointer.location.y - pointer.last_location.y;
+            state.desktop.screens[screen_id].center.x += dx as f64;
+            state.desktop.screens[screen_id].center.y += dy as f64;
+        } else {
+            pointer.pointer.clone().motion(state, None, &MotionEvent {
+                location: (event.x(), event.y()).into(),
+                serial: SERIAL_COUNTER.next_serial(),
+                time: event.time()
+            })
+        }
         //self.pointer.motion(
             //self.location,
             //under,
@@ -124,15 +134,16 @@ impl Pointer {
     pub fn on_button<B: InputBackend>(
         state: &mut AppState,
         index: usize,
-        event: B::PointerButtonEvent
+        event: B::PointerButtonEvent,
+        screen_id: usize
     ) {
         match event.state() {
             ButtonState::Pressed => {
-                crit!(state.logger, "CLICK!");
+                crit!(state.logger, "CLICK! {screen_id}");
                 state.pointers[index].held = true;
             },
             ButtonState::Released => {
-                crit!(state.logger, "CLACK!");
+                crit!(state.logger, "CLACK! {screen_id}");
                 state.pointers[index].held = false;
             }
         }
@@ -172,7 +183,8 @@ impl Pointer {
     pub fn on_axis<B: InputBackend>(
         state: &mut AppState,
         index: usize,
-        event: B::PointerAxisEvent
+        event: B::PointerAxisEvent,
+        screen_id: usize
     ) {
         //let source = match evt.source() {
             //AxisSource::Continuous => wl_pointer::AxisSource::Continuous,
