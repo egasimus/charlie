@@ -19,7 +19,8 @@ use smithay::{
 
 pub struct Pointer {
     logger:        Logger,
-    pointer:       PointerHandle<App>,
+    state:         Rc<RefCell<AppState>>,
+    pointer:       PointerHandle<AppState>,
     pub texture:   Gles2Texture,
     status:        Arc<Mutex<Status>>,
     position:      Point<f64, Logical>,
@@ -30,11 +31,13 @@ impl Pointer {
 
     pub fn new (
         logger:  &Logger,
-        pointer: PointerHandle<App>,
+        state:   &Rc<RefCell<AppState>>,
+        pointer: PointerHandle<AppState>,
         texture: Gles2Texture
     ) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
             logger:        logger.clone(),
+            state:         state.clone(),
             status:        Arc::new(Mutex::new(Status::Default)),
             position:      (100.0, 30.0).into(),
             last_position: (100.0, 30.0).into(),
@@ -94,7 +97,8 @@ impl Pointer {
         panic!("{:?}", delta);
     }
 
-    pub fn on_move_absolute<B: InputBackend>(&mut self, evt: B::PointerMotionAbsoluteEvent) {
+    pub fn on_move_absolute<B: InputBackend>(&mut self, event: &MotionEvent) {
+        self.pointer.motion(&mut *self.state.borrow_mut(), None, event)
         //self.pointer.motion(
             //self.position,
             //under,

@@ -12,14 +12,14 @@ atom_manager! {
 
 pub struct XWaylandState {
     logger:    Logger,
-    events:    LoopHandle<'static, App>,
+    events:    LoopHandle<'static, AppState>,
     xwayland:  XWayland,
     connected: Option<XWaylandConnection>
 }
 
 impl XWaylandState {
 
-    pub fn new (engine: &impl Engine<State=App>) -> Result<Self, Box<dyn Error>> {
+    pub fn new (engine: &impl Engine<State=AppState>) -> Result<Self, Box<dyn Error>> {
         let logger  = engine.logger();
         let events  = engine.event_handle();
         let display = engine.display_handle();
@@ -51,7 +51,7 @@ impl XWaylandState {
     ) -> Result<(), Box<dyn Error>> {
         let logger = &self.logger;
         let events = &self.events;
-        let connection = XWaylandConnection::new(&logger, display, &events, connection, client)?;
+        let connection = XWaylandConnection::new(&logger, display, events, connection, client)?;
         self.connected = Some(connection);
         debug!(self.logger, "DISPLAY={:?}", ::std::env::var("DISPLAY"));
         Ok(())
@@ -75,7 +75,7 @@ impl XWaylandConnection {
     pub fn new (
         logger:     &Logger,
         display:    &DisplayHandle,
-        events:     &LoopHandle<'static, App>,
+        events:     &LoopHandle<'static, AppState>,
         connection: UnixStream,
         client:     Client
     ) -> Result<Self, Box<dyn Error>> {

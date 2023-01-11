@@ -33,13 +33,13 @@ enum KeyAction {
 
 pub struct Keyboard {
     logger:   Logger,
-    keyboard: KeyboardHandle<App>,
+    keyboard: KeyboardHandle<AppState>,
     hotkeys:  Vec<u32>,
 }
 
 impl Keyboard {
 
-    pub fn new (logger: &Logger, keyboard: KeyboardHandle<App>) -> Self {
+    pub fn new (logger: &Logger, keyboard: KeyboardHandle<AppState>) -> Self {
         Self {
             logger: logger.clone(),
             keyboard,

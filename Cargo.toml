@@ -29,7 +29,7 @@ features = [
   "backend_drm",
   "backend_egl",
   #"backend_gbm",
-  #"backend_libinput",
+  "backend_libinput",
   #"backend_session",
   #"backend_udev",
   "backend_winit",

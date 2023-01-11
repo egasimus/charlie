@@ -1,6 +1,6 @@
 pub(crate) use crate::{
     traits::*,
-    state::{App, ScreenState},
+    state::{App, AppState, desktop::ScreenState},
 };
 
 pub(crate) use std::{

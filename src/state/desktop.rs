@@ -2,6 +2,7 @@ use super::prelude::*;
 
 pub struct Desktop {
     logger:  Logger,
+    display: DisplayHandle,
     /// A collection of windows that are mapped across the screens
     windows: Vec<WindowState>,
     /// A collection of views into the workspace, bound to engine outputs
@@ -9,9 +10,11 @@ pub struct Desktop {
 }
 
 impl Desktop {
-    pub fn new (logger: Logger) -> Self {
+
+    pub fn new (engine: &mut impl Engine) -> Self {
         Self {
-            logger,
+            logger:  engine.logger(),
+            display: engine.display_handle(),
             windows: vec![],
             screens: vec![],
         }
@@ -60,6 +63,27 @@ impl Desktop {
             );
         }
     }
+
+}
+
+type ScreenId = usize;
+
+pub struct ScreenState {
+    center: Point<f64, Logical>,
+    size:   Size<f64, Logical>
+}
+
+impl ScreenState {
+    pub fn new (
+        center: impl Into<Point<f64, Logical>>,
+        size:   impl Into<Size<f64, Logical>>
+    ) -> Self {
+        Self { center: center.into(), size: size.into() }
+    }
+    #[inline]
+    pub fn center (&self) -> &Point<f64, Logical> {
+        &self.center
+    }
 }
 
 pub struct WindowState {
@@ -69,6 +93,7 @@ pub struct WindowState {
 }
 
 impl WindowState {
+
     pub fn new (window: Window) -> Self {
         Self { window, center: (0.0, 0.0).into(), size: (0.0, 0.0).into() }
     }
@@ -151,4 +176,5 @@ impl WindowState {
         });
         Ok(())
     }
+
 }

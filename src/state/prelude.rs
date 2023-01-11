@@ -1,5 +1,7 @@
 pub(crate) use crate::prelude::*;
 
+pub(crate) use super::desktop::Desktop;
+
 pub(crate) use smithay::{
     delegate_compositor,
     delegate_data_device,
@@ -7,18 +9,22 @@ pub(crate) use smithay::{
     delegate_seat,
     delegate_shm,
     delegate_xdg_shell,
-    backend::renderer::{
-        buffer_dimensions,
-        ImportAll,
-        utils::{
-            on_commit_buffer_handler,
-            RendererSurfaceState,
-            RendererSurfaceStateUserData,
-        }
+    backend::{
+        renderer::{
+            buffer_dimensions,
+            ImportAll,
+            utils::{
+                on_commit_buffer_handler,
+                RendererSurfaceState,
+                RendererSurfaceStateUserData,
+            }
+        },
+        input::AbsolutePositionEvent
     },
     input::{
         SeatHandler,
         SeatState,
+        keyboard::XkbConfig,
         pointer::{
             AxisFrame,
             ButtonEvent,
@@ -79,6 +85,7 @@ pub(crate) use smithay::{
             add_destruction_hook,
             with_states,
         },
+        input_method::InputMethodSeat,
         data_device::{
             DataDeviceState,
             ClientDndGrabHandler,

@@ -172,27 +172,30 @@ impl<W: Widget + 'static> WinitEngine<W> {
         let started = &self.started.unwrap();
         let logger  = &self.logger;
         let outputs = &mut self.outputs;
-        self.winit_events.run_return(move |event, _target, control_flow| { match event {
-            Event::RedrawEventsCleared => {
-                *control_flow = ControlFlow::Exit;
-            }
-            Event::RedrawRequested(_id) => {
-                callback(WinitEvent::Refresh);
-            }
-            Event::WindowEvent { window_id, event } => match outputs.get_mut(&window_id) {
-                Some(window) => {
-                    window.dispatch(started, event, &mut callback);
-                    if window.closing {
-                        outputs.remove(&window_id);
-                        closed = true;
-                    }
-                },
-                None => {
-                    warn!(logger, "Received event for unknown window id {window_id:?}")
+        self.winit_events.run_return(move |event, _target, control_flow| {
+            //debug!(self.logger, "{target:?}");
+            match event {
+                Event::RedrawEventsCleared => {
+                    *control_flow = ControlFlow::Exit;
                 }
+                Event::RedrawRequested(_id) => {
+                    callback(WinitEvent::Refresh);
+                }
+                Event::WindowEvent { window_id, event } => match outputs.get_mut(&window_id) {
+                    Some(window) => {
+                        window.dispatch(started, event, &mut callback);
+                        if window.closing {
+                            outputs.remove(&window_id);
+                            closed = true;
+                        }
+                    },
+                    None => {
+                        warn!(logger, "Received event for unknown window id {window_id:?}")
+                    }
+                }
+                _ => {}
             }
-            _ => {}
-        }});
+        });
         if closed {
             Err(WinitHostError::WindowClosed)
         } else {

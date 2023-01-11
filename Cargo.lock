@@ -167,7 +167,7 @@ dependencies = [
  "fps_ticker",
  "gl_generator",
  "image",
- "input",
+ "input 0.6.0",
  "rand",
  "slog",
  "slog-async",
@@ -779,6 +779,17 @@ dependencies = [
  "input-sys",
  "libc",
  "udev",
+]
+
+[[package]]
+name = "input"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f95640ef27dac9b23ef1fbd760c67a88ce3cab2143a2c18390e71f39c53b815f"
+dependencies = [
+ "bitflags",
+ "input-sys",
+ "libc",
 ]
 
 [[package]]
@@ -1651,6 +1662,7 @@ dependencies = [
  "drm-fourcc",
  "gl_generator",
  "indexmap",
+ "input 0.7.1",
  "lazy_static",
  "libc",
  "libloading",

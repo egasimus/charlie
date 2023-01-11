@@ -3,12 +3,12 @@ use super::pointer::*;
 
 use smithay::wayland::shell::xdg::Configure;
 
-delegate_seat!(App);
-delegate_data_device!(App);
-delegate_output!(App);
-delegate_compositor!(App);
-delegate_shm!(App);
-delegate_xdg_shell!(App);
+delegate_seat!(AppState);
+delegate_data_device!(AppState);
+delegate_output!(AppState);
+delegate_compositor!(AppState);
+delegate_shm!(AppState);
+delegate_xdg_shell!(AppState);
 
 /// Contains the state of the features that are delegated to Smithay's default implementations.
 pub struct DelegatedState {
@@ -17,9 +17,9 @@ pub struct DelegatedState {
     pub xdg_shell:      XdgShellState,
     pub shm:            ShmState,
     pub output_manager: OutputManagerState,
-    pub seat:           SeatState<App>,
+    pub seat:           SeatState<AppState>,
     pub data_device:    DataDeviceState,
-    display_handle:     DisplayHandle,
+    pub display_handle: DisplayHandle,
     pub clock:          Clock<Monotonic>,
 }
 
@@ -28,23 +28,23 @@ impl DelegatedState {
         let dh = engine.display_handle();
         Ok(Self {
             logger:         engine.logger(),
-            compositor:     CompositorState::new::<App, _>(&dh, engine.logger()),
-            xdg_shell:      XdgShellState::new::<App, _>(&dh, engine.logger()),
-            shm:            ShmState::new::<App, _>(&dh, vec![], engine.logger()),
-            output_manager: OutputManagerState::new_with_xdg_output::<App>(&dh),
+            compositor:     CompositorState::new::<AppState, _>(&dh, engine.logger()),
+            xdg_shell:      XdgShellState::new::<AppState, _>(&dh, engine.logger()),
+            shm:            ShmState::new::<AppState, _>(&dh, vec![], engine.logger()),
+            output_manager: OutputManagerState::new_with_xdg_output::<AppState>(&dh),
             seat:           SeatState::new(),
-            data_device:    DataDeviceState::new::<App, _>(&dh, engine.logger()),
+            data_device:    DataDeviceState::new::<AppState, _>(&dh, engine.logger()),
             display_handle: dh,
             clock:          Clock::new()?
         })
     }
 
-    pub fn seat_add (&mut self, name: impl Into<String>) -> Seat<App> {
+    pub fn seat_add (&mut self, name: impl Into<String>) -> Seat<AppState> {
         self.seat.new_wl_seat(&self.display_handle, name.into(), self.logger.clone())
     }
 }
 
-impl XdgShellHandler for App {
+impl XdgShellHandler for AppState {
 
     fn xdg_shell_state (&mut self) -> &mut XdgShellState {
         &mut self.delegated.xdg_shell
@@ -53,8 +53,7 @@ impl XdgShellHandler for App {
     fn new_toplevel (&mut self, surface: ToplevelSurface) {
         debug!(self.logger, "New toplevel surface: {surface:?}");
         surface.send_configure();
-        let window = Window::new(Kind::Xdg(surface));
-        self.window_add(window);
+        self.desktop.window_add(Window::new(Kind::Xdg(surface)));
     }
 
     fn new_popup (&mut self, surface: PopupSurface, positioner: PositionerState) {
@@ -120,36 +119,36 @@ impl XdgShellHandler for App {
     }
 }
 
-impl SeatHandler for App {
+impl SeatHandler for AppState {
     type KeyboardFocus = WlSurface;
     type PointerFocus = WlSurface;
 
-    fn seat_state (&mut self) -> &mut SeatState<App> {
+    fn seat_state (&mut self) -> &mut SeatState<AppState> {
         &mut self.delegated.seat
     }
 
     fn cursor_image (
         &mut self,
-        _seat: &smithay::input::Seat<Self>,
+        _seat: &Seat<Self>,
         _image: smithay::input::pointer::CursorImageStatus,
     ) {
     }
 
-    fn focus_changed(&mut self, _seat: &smithay::input::Seat<Self>, _focused: Option<&WlSurface>) {
+    fn focus_changed(&mut self, _seat: &Seat<Self>, _focused: Option<&WlSurface>) {
     }
 }
 
-impl DataDeviceHandler for App {
+impl DataDeviceHandler for AppState {
     fn data_device_state(&self) -> &smithay::wayland::data_device::DataDeviceState {
         &self.delegated.data_device
     }
 }
 
-impl ClientDndGrabHandler for App {}
+impl ClientDndGrabHandler for AppState {}
 
-impl ServerDndGrabHandler for App {}
+impl ServerDndGrabHandler for AppState {}
 
-impl CompositorHandler for App {
+impl CompositorHandler for AppState {
     fn compositor_state (&mut self) -> &mut CompositorState {
         &mut self.delegated.compositor
     }
@@ -184,7 +183,7 @@ impl CompositorHandler for App {
                 None => break
             }
         }
-        if let Some(window) = self.desktop.borrow().window_find(&surface) {
+        if let Some(window) = self.desktop.window_find(&surface) {
             window.on_commit();
         } else {
             warn!(self.logger, "could not find window for root toplevel surface {surface:?}");
@@ -230,11 +229,11 @@ impl CompositorHandler for App {
     //Some(())
 //}
 
-impl BufferHandler for App {
+impl BufferHandler for AppState {
     fn buffer_destroyed(&mut self, _buffer: &wl_buffer::WlBuffer) {}
 }
 
-impl ShmHandler for App {
+impl ShmHandler for AppState {
     fn shm_state(&self) -> &ShmState {
         &self.delegated.shm
     }

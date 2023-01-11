@@ -7,16 +7,14 @@ mod state;
 
 use crate::prelude::*;
 use crate::engines::winit::WinitEngine;
-use crate::state::ScreenState;
 
 fn main () -> Result<(), Box<dyn Error>> {
     let (logger, _guard) = init_log();
-    let mut engine = WinitEngine::new(&logger)?;
-    let mut state  = App::new(&mut engine)?;
-    state.startup_add("glxgears", &[]);
-    state.startup_add("wezterm", &[]);
-    engine.output_add("Alice", state.screen_add(ScreenState::new((-100.0, 0.0), (0.0, 0.0))))?;
-    engine.output_add("Bob", state.screen_add(ScreenState::new(( 100.0, 0.0), (0.0, 0.0))))?;
-    state.seat_add("Charlie", import_bitmap(engine.renderer(), "data/cursor.png")?)?;
-    engine.start(&mut state)
+    App::new(WinitEngine::new(&logger)?)?
+        .startup("glxgears", &[])
+        .startup("wezterm", &[])
+        .output("Alice",  720, 540, 0.0, 0.0)?
+        .output("Bob",    480, 720, 0.0, 0.0)?
+        .input("Charlie", "data/cursor.png")?
+        .start()
 }
