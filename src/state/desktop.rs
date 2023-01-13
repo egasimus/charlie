@@ -1,22 +1,24 @@
 use super::prelude::*;
 
 pub struct Desktop {
-    logger:  Logger,
-    display: DisplayHandle,
+    logger: Logger,
     /// A collection of windows that are mapped across the screens
     windows: Vec<WindowState>,
     /// A collection of views into the workspace, bound to engine outputs
     pub screens: Vec<ScreenState>,
+    compositor: CompositorState,
+    xdg_shell: XdgShellState,
 }
 
 impl Desktop {
 
-    pub fn new (engine: &mut impl Engine) -> Self {
+    pub fn new (engine: &mut impl Engine, handle: &DisplayHandle) -> Self {
         Self {
-            logger:  engine.logger(),
-            display: engine.display_handle(),
-            windows: vec![],
-            screens: vec![],
+            compositor: CompositorState::new::<Self, _>(&handle, engine.logger()),
+            xdg_shell:  XdgShellState::new::<Self, _>(&handle, engine.logger()),
+            logger:     engine.logger(),
+            windows:    vec![],
+            screens:    vec![],
         }
     }
 
@@ -64,6 +66,130 @@ impl Desktop {
         }
     }
 
+}
+
+delegate_compositor!(Desktop);
+
+impl CompositorHandler for Desktop {
+
+    fn compositor_state (&mut self) -> &mut CompositorState {
+        &mut self.compositor
+    }
+
+    /// Commit each surface, binding a state data buffer to it.
+    /// AFAIK This buffer contains the texture which is imported before each render.
+    fn commit (&mut self, surface: &WlSurface) {
+        //debug!(self.logger, "Commit {surface:?}");
+        use smithay::backend::renderer::utils::{
+            RendererSurfaceState         as State,
+            RendererSurfaceStateUserData as StateData
+        };
+        let mut surface = surface.clone();
+        loop {
+            let mut is_new = false;
+            warn!(self.logger, "Init surface: {surface:?}");
+            with_states(&surface, |surface_data| {
+                is_new = surface_data.data_map.insert_if_missing(||RefCell::new(State::default()));
+                let mut data = surface_data.data_map.get::<StateData>().unwrap().borrow_mut();
+                data.update_buffer(surface_data);
+            });
+            if is_new {
+                add_destruction_hook(&surface, |data| {
+                    let data = data.data_map.get::<StateData>();
+                    if let Some(buffer) = data.and_then(|s|s.borrow_mut().buffer.take()) {
+                        buffer.release()
+                    }
+                })
+            }
+            match get_parent(&surface) {
+                Some(parent) => surface = parent,
+                None => break
+            }
+        }
+        if let Some(window) = self.window_find(&surface) {
+            window.on_commit();
+        } else {
+            warn!(self.logger, "could not find window for root toplevel surface {surface:?}");
+        };
+    }
+
+}
+
+delegate_xdg_shell!(Desktop);
+
+impl XdgShellHandler for Desktop {
+
+    fn xdg_shell_state (&mut self) -> &mut XdgShellState {
+        &mut self.xdg_shell
+    }
+
+    fn new_toplevel (&mut self, surface: ToplevelSurface) {
+        debug!(self.logger, "New toplevel surface: {surface:?}");
+        surface.send_configure();
+        self.window_add(Window::new(Kind::Xdg(surface)));
+    }
+
+    fn new_popup (&mut self, surface: PopupSurface, positioner: PositionerState) {
+        surface.with_pending_state(|surface| { surface.geometry = positioner.get_geometry(); });
+        //if let Err(err) = self.popups.track_popup(PopupKind::from(surface)) {
+            //slog::warn!(self.log, "Failed to track popup: {}", err);
+        //}
+    }
+
+    fn reposition_request(&mut self, surface: PopupSurface, positioner: PositionerState, token: u32) {
+        surface.with_pending_state(|surface| {
+            let geometry       = positioner.get_geometry();
+            surface.geometry   = geometry;
+            surface.positioner = positioner;
+        });
+        surface.send_repositioned(token);
+    }
+
+    fn move_request (&mut self, surface: ToplevelSurface, seat: WlSeat, serial: Serial) {
+        //let seat = Seat::from_resource(&seat).unwrap();
+        //let wl_surface = surface.wl_surface();
+        //if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
+            //let pointer = seat.get_pointer().unwrap();
+            //let window = self.window_find(wl_surface).unwrap();
+            //let initial_window_location = Default::default();//self.space.element_location(&window).unwrap();
+            //let grab = MoveSurfaceGrab { start_data, window: window.clone(), initial_window_location, };
+            //pointer.set_grab(self, grab, serial, Focus::Clear);
+        //}
+    }
+
+    fn resize_request (
+        &mut self,
+        surface: ToplevelSurface,
+        seat: WlSeat,
+        serial: Serial,
+        edges: XdgToplevelResizeEdge,
+    ) {
+        //let seat = Seat::from_resource(&seat).unwrap();
+        //let wl_surface = surface.wl_surface();
+        //if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
+            //let pointer = seat.get_pointer().unwrap();
+            //let window = self.window_find(wl_surface).unwrap();
+            ////let initial_window_location = Default::default();//self.space.element_location(&window).unwrap();
+            ////let initial_window_size = (*window).geometry().size;
+            //surface.with_pending_state(|state| { state.states.set(XdgToplevelState::Resizing); });
+            //surface.send_configure();
+            ////let grab = ResizeSurfaceGrab::start(
+                ////start_data,
+                ////window.clone(),
+                ////edges.into(),
+                ////Rectangle::from_loc_and_size(initial_window_location, initial_window_size),
+            ////);
+            ////pointer.set_grab(self, grab, serial, Focus::Clear);
+        //}
+    }
+
+    fn grab (&mut self, _surface: PopupSurface, _seat: WlSeat, _serial: Serial) {
+        // TODO popup grabs
+    }
+
+    fn ack_configure(&mut self, surface: WlSurface, configure: Configure) {
+        debug!(self.logger, "ack_configure {surface:?} -> {configure:?}");
+    }
 }
 
 pub struct ScreenState {

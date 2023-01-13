@@ -10,7 +10,7 @@ use crate::engines::winit::WinitEngine;
 
 fn main () -> Result<(), Box<dyn Error>> {
     let (logger, _guard) = init_log();
-    App::new(WinitEngine::new(&logger)?)?
+    App::<WinitEngine, _, _>::new(&logger)?
         .startup("glxgears", &[])
         .startup("wezterm", &[])
         .output("Alice",  720, 540, 0.0, 0.0)?

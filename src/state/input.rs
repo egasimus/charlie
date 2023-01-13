@@ -1,6 +1,197 @@
 use super::prelude::*;
 
 use smithay::{
+    delegate_seat,
+    delegate_data_device,
+    backend::input::{
+        Event,
+        KeyState,
+        KeyboardKeyEvent
+    },
+    input::keyboard::{
+        keysyms,
+        KeyboardHandle,
+        FilterResult,
+    },
+};
+
+delegate_seat!(AppState);
+delegate_data_device!(AppState);
+
+pub struct Input {
+    logger:      Logger,
+    handle:      DisplayHandle,
+    seat:        SeatState<AppState>,
+    data_device: DataDeviceState,
+    /// State of the mouse pointer(s)
+    pub pointers:  Vec<Pointer>,
+    /// State of the keyboard(s)
+    pub keyboards: Vec<Keyboard>,
+}
+
+impl Input {
+    pub fn new (engine: &impl Engine, handle: &DisplayHandle) -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
+            logger:      engine.logger(),
+            handle:      handle.clone(),
+            seat:        SeatState::new(),
+            data_device: DataDeviceState::new::<AppState, _>(&handle, engine.logger()),
+            pointers:    vec![],
+            keyboards:   vec![],
+        })
+    }
+
+    pub fn seat_add (&mut self, name: impl Into<String>, pointer: Gles2Texture)
+        -> Result<Seat<AppState>, Box<dyn Error>>
+    {
+        let mut seat = self.seat.new_wl_seat(&self.handle, name.into(), self.logger.clone());
+        self.pointers.push(
+            Pointer::new(&self.logger, seat.add_pointer(), pointer)?
+        );
+        self.keyboards.push(
+            Keyboard::new(&self.logger, seat.add_keyboard(XkbConfig::default(), 200, 25)?)
+        );
+        seat.add_input_method(XkbConfig::default(), 200, 25);
+        Ok(seat)
+    }
+}
+
+impl SeatHandler for AppState {
+    type KeyboardFocus = WlSurface;
+    type PointerFocus  = WlSurface;
+
+    fn seat_state (&mut self) -> &mut SeatState<AppState> {
+        &mut self.input.seat
+    }
+
+    fn cursor_image (
+        &mut self,
+        _seat: &Seat<Self>,
+        _image: smithay::input::pointer::CursorImageStatus,
+    ) {
+    }
+
+    fn focus_changed(&mut self, _seat: &Seat<Self>, _focused: Option<&WlSurface>) {
+    }
+}
+
+impl DataDeviceHandler for AppState {
+    fn data_device_state(&self) -> &DataDeviceState {
+        &self.input.data_device
+    }
+}
+
+impl ClientDndGrabHandler for AppState {}
+
+impl ServerDndGrabHandler for AppState {}
+
+/// Possible results of a keyboard action
+#[derive(Debug)]
+enum KeyAction {
+    /// Quit the compositor
+    Quit,
+    /// Trigger a vt-switch
+    VtSwitch(i32),
+    /// run a command
+    Run(String),
+    /// Switch the current screen
+    Screen(usize),
+    ScaleUp,
+    ScaleDown,
+    /// Forward the key to the client
+    Forward,
+    /// Do nothing more
+    None,
+}
+
+pub struct Keyboard {
+    logger:  Logger,
+    handle:  KeyboardHandle<AppState>,
+    hotkeys: Vec<u32>,
+}
+
+impl Keyboard {
+
+    pub fn new (logger: &Logger, handle: KeyboardHandle<AppState>) -> Self {
+        Self {
+            logger: logger.clone(),
+            handle,
+            hotkeys: vec![],
+        }
+    }
+
+    pub fn on_key <B: InputBackend> (
+        state: &mut AppState,
+        index: usize,
+        event: B::KeyboardKeyEvent,
+        screen_id: usize
+    ) {
+        let key_code   = event.key_code();
+        let key_state  = event.state();
+        let serial     = SERIAL_COUNTER.next_serial();
+        let logger     = state.logger.clone();
+        let time       = Event::time(&event);
+        //let hotkeys    = &mut state.keyboards[index].hotkeys;
+        let mut action = KeyAction::None;
+        debug!(state.logger, "key"; "keycode" => key_code, "state" => format!("{:?}", key_state));
+        let keyboard = &mut state.input.keyboards[index];
+        keyboard.handle.clone().input::<(), _>(state, key_code, key_state, serial, time, |_,_,_|{
+            FilterResult::Forward
+        });
+        //self.keyboard.input((), keycode, state, serial, time, |state, modifiers, keysym| {
+            //debug!(log, "keysym";
+                //"state"  => format!("{:?}", state),
+                //"mods"   => format!("{:?}", modifiers),
+                //"keysym" => ::xkbcommon::xkb::keysym_get_name(keysym)
+            //);
+            //if let KeyState::Pressed = state {
+                //action = if modifiers.ctrl && modifiers.alt && keysym == keysyms::KEY_BackSpace
+                    //|| modifiers.logo && keysym == keysyms::KEY_q
+                //{
+                    //KeyAction::Quit
+                //} else if (keysyms::KEY_XF86Switch_VT_1..=keysyms::KEY_XF86Switch_VT_12).contains(&keysym) {
+                    //// VTSwicth
+                    //KeyAction::VtSwitch((keysym - keysyms::KEY_XF86Switch_VT_1 + 1) as i32)
+                //} else if modifiers.logo && keysym == keysyms::KEY_Return {
+                    //// run terminal
+                    //KeyAction::Run("weston-terminal".into())
+                //} else if modifiers.logo && keysym >= keysyms::KEY_1 && keysym <= keysyms::KEY_9 {
+                    //KeyAction::Screen((keysym - keysyms::KEY_1) as usize)
+                //} else if modifiers.logo && modifiers.shift && keysym == keysyms::KEY_M {
+                    //KeyAction::ScaleDown
+                //} else if modifiers.logo && modifiers.shift && keysym == keysyms::KEY_P {
+                    //KeyAction::ScaleUp
+                //} else {
+                    //KeyAction::Forward
+                //};
+                //// forward to client only if action == KeyAction::Forward
+                //let forward = matches!(action, KeyAction::Forward);
+                //if !forward { hotkeys.push(keysym); }
+                //forward
+            //} else {
+                //let suppressed = hotkeys.contains(&keysym);
+                //if suppressed { hotkeys.retain(|k| *k != keysym); }
+                ////!suppressed
+            //}
+        //});
+
+        //match action {
+            //KeyAction::None | KeyAction::Forward => {}
+            //KeyAction::Quit => {}
+            //KeyAction::Run(cmd) => {}
+            //KeyAction::ScaleUp => {}
+            //KeyAction::ScaleDown => {}
+            //action => {
+                //warn!(self.logger, "Key action {:?} unsupported on winit backend.", action);
+            //}
+        //};
+    }
+
+}
+
+use super::prelude::*;
+
+use smithay::{
     backend::input::{
         Event,
         //AbsolutePositionEvent,
@@ -19,7 +210,7 @@ use smithay::{
 
 pub struct Pointer {
     logger:        Logger,
-    pub pointer:   PointerHandle<AppState>,
+    pub handle:    PointerHandle<AppState>,
     pub texture:   Gles2Texture,
     status:        Arc<Mutex<Status>>,
     location:      Point<f64, Logical>,
@@ -31,7 +222,7 @@ impl Pointer {
 
     pub fn new (
         logger:  &Logger,
-        pointer: PointerHandle<AppState>,
+        handle:  PointerHandle<AppState>,
         texture: Gles2Texture
     ) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
@@ -39,7 +230,7 @@ impl Pointer {
             status:        Arc::new(Mutex::new(Status::Default)),
             location:      (100.0, 30.0).into(),
             last_location: (100.0, 30.0).into(),
-            pointer,
+            handle,
             texture,
             held: false
         })
@@ -76,8 +267,8 @@ impl Pointer {
             Point::<i32, Physical>::from((0i32, 0i32)),
             size
         );
-        let x = self.location.x + screen.center().x;
-        let y = self.location.y + screen.center().y;
+        let x = self.location.x;
+        let y = self.location.y;
         let location = Point::<f64, Logical>::from((x, y)).to_physical(1.0).to_i32_round();
         //let size = self.texture.size();
         Ok(frame.render_texture_at(
@@ -107,7 +298,7 @@ impl Pointer {
         event: B::PointerMotionAbsoluteEvent,
         screen_id: usize
     ) {
-        let pointer = &mut state.pointers[index];
+        let pointer = &mut state.input.pointers[index];
         pointer.last_location = pointer.location;
         pointer.location = (event.x(), event.y()).into();
         if pointer.held {
@@ -117,7 +308,7 @@ impl Pointer {
             state.desktop.screens[screen_id].center.x += dx as f64;
             state.desktop.screens[screen_id].center.y += dy as f64;
         } else {
-            pointer.pointer.clone().motion(state, None, &MotionEvent {
+            pointer.handle.clone().motion(state, None, &MotionEvent {
                 location: (event.x(), event.y()).into(),
                 serial: SERIAL_COUNTER.next_serial(),
                 time: event.time()
@@ -140,11 +331,11 @@ impl Pointer {
         match event.state() {
             ButtonState::Pressed => {
                 crit!(state.logger, "CLICK! {screen_id}");
-                state.pointers[index].held = true;
+                state.input.pointers[index].held = true;
             },
             ButtonState::Released => {
                 crit!(state.logger, "CLACK! {screen_id}");
-                state.pointers[index].held = false;
+                state.input.pointers[index].held = false;
             }
         }
         //self.desktop.borrow_mut();

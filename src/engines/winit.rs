@@ -1,32 +1,57 @@
 use crate::prelude::*;
 
-use smithay::output::{PhysicalProperties, Subpixel, Mode};
-
-use smithay::backend::{
-    input::InputEvent,
-    egl::{
-        Error as EGLError, EGLContext, EGLSurface,
-        native::XlibWindow,
-        context::GlAttributes,
-        display::EGLDisplay
+use smithay::{
+    delegate_dmabuf,
+    output::{PhysicalProperties, Subpixel, Mode},
+    backend::{
+        allocator::dmabuf::Dmabuf,
+        input::InputEvent,
+        egl::{
+            Error as EGLError, EGLContext, EGLSurface,
+            native::XlibWindow,
+            context::GlAttributes,
+            display::EGLDisplay
+        },
+        renderer::{
+            Bind,
+            ImportDma,
+            ImportEgl
+        },
+        winit::{
+            Error as WinitError, WindowSize, WinitVirtualDevice, WinitEvent,
+            WinitKeyboardInputEvent,
+            WinitMouseMovedEvent, WinitMouseWheelEvent, WinitMouseInputEvent,
+            WinitTouchStartedEvent, WinitTouchMovedEvent, WinitTouchEndedEvent, WinitTouchCancelledEvent
+        }
     },
-    renderer::Bind,
-    winit::{
-        Error as WinitError, WindowSize, WinitVirtualDevice, WinitEvent,
-        WinitKeyboardInputEvent,
-        WinitMouseMovedEvent, WinitMouseWheelEvent, WinitMouseInputEvent,
-        WinitTouchStartedEvent, WinitTouchMovedEvent, WinitTouchEndedEvent, WinitTouchCancelledEvent
+    wayland::{
+        buffer::BufferHandler,
+        dmabuf::{
+            DmabufGlobal,
+            DmabufState,
+            DmabufHandler,
+            DmabufGlobalData
+        },
+        output::{
+            OutputManagerState
+        }
+    },
+    reexports::{
+        wayland_server::GlobalDispatch,
+        wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
+        winit::{
+            dpi::LogicalSize,
+            event::{Event, WindowEvent, ElementState, KeyboardInput, Touch, TouchPhase},
+            event_loop::{EventLoop as WinitEventLoop, ControlFlow},
+            platform::run_return::EventLoopExtRunReturn,
+            platform::unix::WindowExtUnix,
+            window::{WindowId, WindowBuilder, Window as WinitWindow},
+        }
     }
 };
 
-use smithay::reexports::winit::{
-    dpi::LogicalSize,
-    event::{Event, WindowEvent, ElementState, KeyboardInput, Touch, TouchPhase},
-    event_loop::{EventLoop as WinitEventLoop, ControlFlow},
-    platform::run_return::EventLoopExtRunReturn,
-    platform::unix::WindowExtUnix,
-    window::{WindowId, WindowBuilder, Window as WinitWindow},
-};
+use smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer;
+use smithay::wayland::shm::{ShmHandler, ShmState};
 
 use wayland_egl as wegl;
 
@@ -36,41 +61,72 @@ type WinitRenderData = (ScreenId, Size<i32, Physical>);
 
 /// Contains the winit and wayland event loops, spawns one or more windows,
 /// and dispatches events to them.
-pub struct WinitEngine<W: 'static> {
+pub struct WinitEngine {
     logger:       Logger,
     running:      Arc<AtomicBool>,
     started:      Option<Instant>,
-    events:       EventLoop<'static, W>,
-    winit_events: WinitEventLoop<()>,
-    display:      Rc<RefCell<Display<W>>>,
+    events:       WinitEventLoop<()>,
     egl_display:  EGLDisplay,
     egl_context:  EGLContext,
     renderer:     Gles2Renderer,
+    shm:          ShmState,
+    dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
     outputs:      HashMap<WindowId, WinitHostWindow>,
+    out_manager:  OutputManagerState,
+    flush:        FlushCallback,
 }
 
-impl<W> Stoppable for WinitEngine<W> {
+impl Engine for WinitEngine {
 
-    fn running (&self) -> &Arc<AtomicBool> {
-        &self.running
+    /// Initialize winit engine
+    fn new (
+        logger:  &Logger,
+        display: &DisplayHandle,
+        flush:   FlushCallback
+    ) -> Result<Self, Box<dyn Error>> {
+        debug!(logger, "Starting Winit engine");
+        let events = WinitEventLoop::new();
+        let window = Arc::new(WindowBuilder::new() // Null window to host the EGLDisplay
+            .with_inner_size(LogicalSize::new(16, 16))
+            .with_title("Charlie Null")
+            .with_visible(false)
+            .build(&events)
+            .map_err(WinitError::InitFailed)?);
+        let egl_display = EGLDisplay::new(window, logger.clone()).unwrap();
+        let egl_context = EGLContext::new_with_config(&egl_display, GlAttributes {
+            version: (3, 0), profile: None, vsync: true, debug: cfg!(debug_assertions),
+        }, Default::default(), logger.clone())?;
+        let mut renderer = Self::make_renderer(logger, &egl_context)?;
+        let dmabuf_state = if renderer.bind_wl_display(&display).is_ok() {
+            info!(logger, "EGL hardware-acceleration enabled");
+            let mut state = DmabufState::new();
+            let global = state.create_global::<Self, _>(
+                display,
+                renderer.dmabuf_formats().cloned().collect::<Vec<_>>(),
+                logger.clone(),
+            );
+            Some((state, global))
+        } else {
+            None
+        };
+        Ok(Self {
+            logger:       logger.clone(),
+            shm:          ShmState::new::<Self, _>(&display, vec![], logger.clone()),
+            out_manager:  OutputManagerState::new_with_xdg_output::<Self>(&display),
+            running:      Arc::new(AtomicBool::new(true)),
+            started:      None,
+            events,
+            egl_display,
+            egl_context,
+            dmabuf_state,
+            renderer,
+            outputs:      HashMap::new(),
+            flush
+        })
     }
-
-}
-
-impl<W> Engine for WinitEngine<W> where W: Widget<RenderData=WinitRenderData> {
-
-    type State = W;
 
     fn logger (&self) -> Logger {
         self.logger.clone()
-    }
-
-    fn display (&self) -> &Rc<RefCell<Display<W>>> {
-        &self.display
-    }
-
-    fn events (&self) -> &EventLoop<'static, W> {
-        &self.events
     }
 
     fn renderer (&mut self) -> &mut Gles2Renderer {
@@ -85,7 +141,7 @@ impl<W> Engine for WinitEngine<W> where W: Widget<RenderData=WinitRenderData> {
         height: i32
     ) -> Result<(), Box<dyn Error>> {
         let window = WinitHostWindow::new(
-            &self.logger, &self.winit_events, &Self::make_context(&self.logger, &self.egl_context)?,
+            &self.logger, &self.events, &Self::make_context(&self.logger, &self.egl_context)?,
             &format!("Output {screen}"), width, height,
             screen
         )?;
@@ -98,11 +154,11 @@ impl<W> Engine for WinitEngine<W> where W: Widget<RenderData=WinitRenderData> {
         Ok(())
     }
 
-    fn tick (&mut self, state: &mut W) -> Result<(), Box<dyn Error>> {
+    fn tick (&mut self, state: &mut impl Widget<WinitRenderData>) -> Result<(), Box<dyn Error>> {
         // Dispatch input events
         self.dispatch(|screen_id, event| match event {
             WinitEvent::Resized { size, scale_factor } => {
-                //panic!("host resize unsupported");
+                crit!(self.logger, "host resize unsupported");
             }
             WinitEvent::Input(event) => {
                 state.update(screen_id, event)
@@ -114,42 +170,47 @@ impl<W> Engine for WinitEngine<W> where W: Widget<RenderData=WinitRenderData> {
             output.render(&mut self.renderer, state)?;
         }
         // Advance the event loop
-        self.events.dispatch(Some(Duration::from_millis(1)), state)?;
-        state.refresh()?;
-        Ok(self.display.borrow_mut().flush_clients()?)
+        Ok((self.flush)(state)?)
     }
 
 }
 
-impl<W: Widget + 'static> WinitEngine<W> {
 
-    pub fn new (logger: &Logger) -> Result<Self, Box<dyn Error>> {
-        debug!(logger, "Starting Winit engine");
-        let winit_events = WinitEventLoop::new();
-        let window = Arc::new(WindowBuilder::new() // Null window to host the EGLDisplay
-            .with_inner_size(LogicalSize::new(16, 16))
-            .with_title("Charlie Null")
-            .with_visible(false)
-            .build(&winit_events)
-            .map_err(WinitError::InitFailed)?);
-        let egl_display = EGLDisplay::new(window, logger.clone()).unwrap();
-        let egl_context = EGLContext::new_with_config(&egl_display, GlAttributes {
-            version: (3, 0), profile: None, vsync: true, debug: cfg!(debug_assertions),
-        }, Default::default(), logger.clone())?;
-        let renderer = Self::make_renderer(logger, &egl_context)?;
-        Ok(Self {
-            logger:       logger.clone(),
-            running:      Arc::new(AtomicBool::new(true)),
-            started:      None,
-            events:       EventLoop::try_new()?,
-            winit_events,
-            display:      Rc::new(RefCell::new(Display::new()?)),
-            egl_display,
-            egl_context,
-            renderer,
-            outputs:      HashMap::new(),
-        })
+impl Stoppable for WinitEngine {
+
+    fn running (&self) -> &Arc<AtomicBool> {
+        &self.running
     }
+
+}
+
+impl BufferHandler for WinitEngine {
+    fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
+}
+
+delegate_output!(WinitEngine);
+
+impl ShmHandler for WinitEngine {
+    fn shm_state(&self) -> &ShmState {
+        &self.shm
+    }
+}
+
+delegate_shm!(WinitEngine);
+
+impl DmabufHandler for WinitEngine {
+    fn dmabuf_state(&mut self) -> &mut smithay::wayland::dmabuf::DmabufState {
+        &mut self.dmabuf_state.as_mut().unwrap().0
+    }
+
+    fn dmabuf_imported(&mut self, _global: &smithay::wayland::dmabuf::DmabufGlobal, dmabuf: smithay::backend::allocator::dmabuf::Dmabuf) -> Result<(), smithay::wayland::dmabuf::ImportError> {
+        self.renderer.import_dmabuf(&dmabuf, None).map(|_| ()).map_err(|_| smithay::wayland::dmabuf::ImportError::Failed)
+    }
+}
+
+delegate_dmabuf!(WinitEngine);
+
+impl WinitEngine {
 
     fn make_context (logger: &Logger, egl: &EGLContext) -> Result<EGLContext, Box<dyn Error>> {
         Ok(EGLContext::new_shared_with_config(egl.display(), egl, GlAttributes {
@@ -178,7 +239,7 @@ impl<W: Widget + 'static> WinitEngine<W> {
         let started = &self.started.unwrap();
         let logger  = &self.logger;
         let outputs = &mut self.outputs;
-        self.winit_events.run_return(move |event, _target, control_flow| {
+        self.events.run_return(move |event, _target, control_flow| {
             //debug!(self.logger, "{target:?}");
             match event {
                 Event::RedrawEventsCleared => {
@@ -286,7 +347,7 @@ impl WinitHostWindow {
     pub fn render (
         &self,
         renderer: &mut Gles2Renderer,
-        state:    &mut impl Widget<RenderData=WinitRenderData>
+        state:    &mut impl Widget<WinitRenderData>
     ) -> Result<(), Box<dyn Error>> {
         if let Some(size) = self.resized.take() {
             self.surface.resize(size.w, size.h, 0, 0);

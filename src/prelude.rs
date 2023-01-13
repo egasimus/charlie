@@ -17,6 +17,12 @@ pub(crate) use std::{
 
 pub(crate) use slog::{Logger, Drain, o, info, debug, warn, trace, error, crit};
 
+pub(crate) use smithay::{
+    delegate_output,
+    delegate_shm,
+    delegate_dmabuf,
+};
+
 pub(crate) use smithay::backend::{
     input::{
         InputBackend,

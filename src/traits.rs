@@ -1,14 +1,12 @@
 use crate::prelude::*;
 
-pub trait Widget {
-
-    type RenderData;
+pub trait Widget<D> {
 
     fn prepare (&mut self) -> Result<(), Box<dyn Error>> {
         Ok(())
     }
 
-    fn render <'r> (&'r self, context: RenderContext<'r, Self::RenderData>)
+    fn render <'r> (&'r self, context: RenderContext<'r, D>)
         -> Result<(), Box<dyn Error>>;
 
     fn refresh (&mut self) -> Result<(), Box<dyn Error>> {
@@ -41,39 +39,50 @@ pub trait Stoppable {
 
 }
 
+pub trait Flush {
+    fn flush (&mut self) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
+}
+
+pub type FlushCallback = Box<dyn Fn(&mut dyn Flush)->Result<(), std::io::Error>>;
+
+pub type DisplayContext = (DisplayHandle, FlushClients);
+
 pub trait Engine: Stoppable + 'static {
 
-    type State;
+    fn new (logger: &Logger, display: &DisplayHandle, flush: FlushCallback)
+        -> Result<Self, Box<dyn Error>> where Self: Sized;
 
     /// Obtain a copy of the logger.
     fn logger (&self) -> Logger;
 
-    /// Obtain a reference to the display.
-    fn display (&self) -> &Rc<RefCell<Display<Self::State>>>;
+    ///// Obtain a reference to the event loop.
+    //fn events (&self) -> &EventLoop<'static, State>;
 
-    /// Obtain a reference to the event loop.
-    fn events (&self) -> &EventLoop<'static, Self::State>;
+    ///// Obtain a handle to the event loop.
+    //fn event_handle (&self) -> LoopHandle<'static, State> {
+        //self.events().handle()
+    //}
 
-    /// Obtain a reference to the display.
-    fn display_handle (&self) -> DisplayHandle {
-        self.display().borrow().handle()
-    }
+    ///// Obtain a reference to the display.
+    //fn display (&self) -> &Rc<RefCell<Display<GlobalTarget>>>;
 
-    /// Obtain a pollable file descriptor for the display.
-    fn display_fd (&self) -> i32 {
-        self.display().borrow_mut().backend().poll_fd().as_raw_fd()
-    }
+    ///// Obtain a reference to the display.
+    //fn display_handle (&self) -> DisplayHandle {
+        //self.display().borrow().handle()
+    //}
 
-    /// Obtain a callable which dispatches display state to clients.
-    fn display_dispatcher (&self) -> Box<dyn Fn(&mut Self::State) -> Result<usize, std::io::Error>> {
-        let display = self.display().clone();
-        Box::new(move |widget| { display.borrow_mut().dispatch_clients(widget) })
-    }
+    ///// Obtain a pollable file descriptor for the display.
+    //fn display_fd (&self) -> i32 {
+        //self.display().borrow_mut().backend().poll_fd().as_raw_fd()
+    //}
 
-    /// Obtain a handle to the event loop.
-    fn event_handle (&self) -> LoopHandle<'static, Self::State> {
-        self.events().handle()
-    }
+    ///// Obtain a callable which dispatches display state to clients.
+    //fn display_dispatcher (&self) -> Box<dyn Fn(&mut Self::State) -> Result<usize, std::io::Error>> {
+        //let display = self.display().clone();
+        //Box::new(move |widget| { display.borrow_mut().dispatch_clients(widget) })
+    //}
 
     /// Obtain a mutable reference to the renderer.
     fn renderer (&mut self) -> &mut Gles2Renderer;
@@ -102,8 +111,14 @@ pub trait Engine: Stoppable + 'static {
         unimplemented!();
     }
 
-    fn start (&mut self, app: &mut Self::State) -> Result<(), Box<dyn Error>> {
-        self.prepare(app)?;
+    /// Setup logic involved immediately before starting the app.
+    fn setup <D> (&mut self, app: &mut impl Widget<D>) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
+
+    /// Run the main loop until it closes.
+    fn start <D> (&mut self, app: &mut impl Widget<D>) -> Result<(), Box<dyn Error>> {
+        self.setup(app)?;
         self.start_running();
         while self.is_running() {
             if let Err(err) = self.tick(app) {
@@ -115,11 +130,8 @@ pub trait Engine: Stoppable + 'static {
         Ok(())
     }
 
-    fn prepare (&mut self, app: &mut Self::State) -> Result<(), Box<dyn Error>> {
-        Ok(())
-    }
-
-    fn tick (&mut self, state: &mut Self::State) -> Result<(), Box<dyn Error>>;
+    /// Engine-specific implementation of a step of the main loop.
+    fn tick <D> (&mut self, state: &mut impl Widget<D>) -> Result<(), Box<dyn Error>>;
 
 }
 

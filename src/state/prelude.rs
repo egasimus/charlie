@@ -5,9 +5,7 @@ pub(crate) use super::desktop::Desktop;
 pub(crate) use smithay::{
     delegate_compositor,
     delegate_data_device,
-    delegate_output,
     delegate_seat,
-    delegate_shm,
     delegate_xdg_shell,
     backend::{
         renderer::{
@@ -95,11 +93,6 @@ pub(crate) use smithay::{
             ClientDndGrabHandler,
             DataDeviceHandler,
             ServerDndGrabHandler
-        },
-        output::OutputManagerState,
-        shm::{
-            ShmHandler,
-            ShmState
         },
         shell::xdg::{
             PopupSurface,
