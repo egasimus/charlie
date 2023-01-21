@@ -2,6 +2,7 @@ use super::prelude::*;
 
 pub struct Desktop {
     logger: Logger,
+    clock:  Clock<Monotonic>,
     /// A collection of windows that are mapped across the screens
     windows: Vec<WindowState>,
     /// A collection of views into the workspace, bound to engine outputs
@@ -12,14 +13,15 @@ pub struct Desktop {
 
 impl Desktop {
 
-    pub fn new (engine: &mut impl Engine, handle: &DisplayHandle) -> Self {
-        Self {
-            compositor: CompositorState::new::<Self, _>(&handle, engine.logger()),
-            xdg_shell:  XdgShellState::new::<Self, _>(&handle, engine.logger()),
-            logger:     engine.logger(),
-            windows:    vec![],
-            screens:    vec![],
-        }
+    pub fn new (logger: &Logger, handle: &DisplayHandle) -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
+            logger: logger.clone(),
+            clock:  Clock::new()?,
+            compositor: CompositorState::new::<Self, _>(&handle, logger.clone()),
+            xdg_shell:  XdgShellState::new::<Self, _>(&handle, logger.clone()),
+            windows: vec![],
+            screens: vec![],
+        })
     }
 
     /// Add a viewport into the workspace.
@@ -55,11 +57,11 @@ impl Desktop {
         Ok(())
     }
 
-    pub fn tick (&self, output: &Output, time: Time<Monotonic>) {
+    pub fn send_frames (&self, output: &Output) {
         for window in self.windows.iter() {
             window.window.send_frame(
                 output,
-                Duration::from(time),
+                Duration::from(self.clock.now()),
                 Some(Duration::from_secs(1)),
                 smithay::desktop::utils::surface_primary_scanout_output
             );
@@ -187,7 +189,7 @@ impl XdgShellHandler for Desktop {
         // TODO popup grabs
     }
 
-    fn ack_configure(&mut self, surface: WlSurface, configure: Configure) {
+    fn ack_configure(&mut self, surface: WlSurface, configure: smithay::wayland::shell::xdg::Configure) {
         debug!(self.logger, "ack_configure {surface:?} -> {configure:?}");
     }
 }

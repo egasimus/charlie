@@ -1,49 +1,34 @@
 use crate::prelude::*;
 
+mod winit_update;
+pub use winit_update::*;
+
+mod winit_render;
+pub use winit_render::*;
+
 use smithay::{
     delegate_dmabuf,
     output::{PhysicalProperties, Subpixel, Mode},
     backend::{
         allocator::dmabuf::Dmabuf,
-        input::InputEvent,
         egl::{
             Error as EGLError, EGLContext, EGLSurface,
             native::XlibWindow,
             context::GlAttributes,
             display::EGLDisplay
         },
-        renderer::{
-            Bind,
-            ImportDma,
-            ImportEgl
-        },
-        winit::{
-            Error as WinitError, WindowSize, WinitVirtualDevice, WinitEvent,
-            WinitKeyboardInputEvent,
-            WinitMouseMovedEvent, WinitMouseWheelEvent, WinitMouseInputEvent,
-            WinitTouchStartedEvent, WinitTouchMovedEvent, WinitTouchEndedEvent, WinitTouchCancelledEvent
-        }
+        renderer::{ImportDma, ImportEgl},
+        winit::{Error as WinitError, WindowSize}
     },
     wayland::{
         buffer::BufferHandler,
-        dmabuf::{
-            DmabufGlobal,
-            DmabufState,
-            DmabufHandler,
-            DmabufGlobalData
-        },
-        output::{
-            OutputManagerState
-        }
+        dmabuf::{DmabufGlobal, DmabufState, DmabufHandler, ImportError},
+        output::{OutputManagerState}
     },
     reexports::{
-        wayland_server::GlobalDispatch,
-        wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
         winit::{
             dpi::LogicalSize,
-            event::{Event, WindowEvent, ElementState, KeyboardInput, Touch, TouchPhase},
-            event_loop::{EventLoop as WinitEventLoop, ControlFlow},
-            platform::run_return::EventLoopExtRunReturn,
+            event_loop::{EventLoop as WinitEventLoop},
             platform::unix::WindowExtUnix,
             window::{WindowId, WindowBuilder, Window as WinitWindow},
         }
@@ -56,8 +41,6 @@ use smithay::wayland::shm::{ShmHandler, ShmState};
 use wayland_egl as wegl;
 
 type ScreenId = usize;
-
-type WinitRenderData = (ScreenId, Size<i32, Physical>);
 
 /// Contains the winit and wayland event loops, spawns one or more windows,
 /// and dispatches events to them.
@@ -73,30 +56,44 @@ pub struct WinitEngine {
     dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
     outputs:      HashMap<WindowId, WinitHostWindow>,
     out_manager:  OutputManagerState,
-    flush:        FlushCallback,
 }
 
-impl Engine for WinitEngine {
+impl WinitEngine {
+    pub fn window_get (&mut self, window_id: &WindowId) -> &mut WinitHostWindow {
+        self.outputs.get_mut(&window_id).unwrap()
+    }
+}
+
+impl<W> Engine<'static, WinitUpdateContext, WinitRenderContext<'static>, W> for WinitEngine where 
+    W: Widget<'static, WinitUpdateContext, WinitRenderContext<'static>>,
+{
 
     /// Initialize winit engine
     fn new (
         logger:  &Logger,
         display: &DisplayHandle,
-        flush:   FlushCallback
     ) -> Result<Self, Box<dyn Error>> {
+
         debug!(logger, "Starting Winit engine");
+
         let events = WinitEventLoop::new();
-        let window = Arc::new(WindowBuilder::new() // Null window to host the EGLDisplay
+
+        // Null window to host the EGLDisplay
+        let window = Arc::new(WindowBuilder::new()
             .with_inner_size(LogicalSize::new(16, 16))
             .with_title("Charlie Null")
             .with_visible(false)
             .build(&events)
             .map_err(WinitError::InitFailed)?);
+
         let egl_display = EGLDisplay::new(window, logger.clone()).unwrap();
+
         let egl_context = EGLContext::new_with_config(&egl_display, GlAttributes {
             version: (3, 0), profile: None, vsync: true, debug: cfg!(debug_assertions),
         }, Default::default(), logger.clone())?;
-        let mut renderer = Self::make_renderer(logger, &egl_context)?;
+
+        let mut renderer = make_renderer(logger, &egl_context)?;
+
         let dmabuf_state = if renderer.bind_wl_display(&display).is_ok() {
             info!(logger, "EGL hardware-acceleration enabled");
             let mut state = DmabufState::new();
@@ -109,6 +106,7 @@ impl Engine for WinitEngine {
         } else {
             None
         };
+
         Ok(Self {
             logger:       logger.clone(),
             shm:          ShmState::new::<Self, _>(&display, vec![], logger.clone()),
@@ -121,7 +119,6 @@ impl Engine for WinitEngine {
             dmabuf_state,
             renderer,
             outputs:      HashMap::new(),
-            flush
         })
     }
 
@@ -133,53 +130,32 @@ impl Engine for WinitEngine {
         &mut self.renderer
     }
 
-    fn output_add (
-        &mut self,
-        name:   &str,
-        screen: ScreenId,
-        width:  i32,
-        height: i32
+}
+
+impl Inputs for WinitEngine {
+    fn input_added (&mut self, name: &str) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
+}
+
+impl Outputs for WinitEngine {
+
+    fn output_added (
+        &mut self, name: &str, screen: ScreenId, width: i32, height: i32
     ) -> Result<(), Box<dyn Error>> {
+
         let window = WinitHostWindow::new(
-            &self.logger, &self.events, &Self::make_context(&self.logger, &self.egl_context)?,
+            &self.logger, &self.events, &make_context(&self.logger, &self.egl_context)?,
             &format!("Output {screen}"), width, height,
             screen
         )?;
+
         let window_id = window.id();
+
         self.outputs.insert(window_id, window);
+
         Ok(())
-    }
 
-    fn input_add (&mut self, name: &str) -> Result<(), Box<dyn Error>> {
-        Ok(())
-    }
-
-    fn tick (&mut self, state: &mut impl Widget<WinitRenderData>) -> Result<(), Box<dyn Error>> {
-        // Dispatch input events
-        self.dispatch(|screen_id, event| match event {
-            WinitEvent::Resized { size, scale_factor } => {
-                crit!(self.logger, "host resize unsupported");
-            }
-            WinitEvent::Input(event) => {
-                state.update(screen_id, event)
-            }
-            _ => (),
-        })?;
-        // Render each output
-        for (_, output) in self.outputs.iter() {
-            output.render(&mut self.renderer, state)?;
-        }
-        // Advance the event loop
-        Ok((self.flush)(state)?)
-    }
-
-}
-
-
-impl Stoppable for WinitEngine {
-
-    fn running (&self) -> &Arc<AtomicBool> {
-        &self.running
     }
 
 }
@@ -199,79 +175,20 @@ impl ShmHandler for WinitEngine {
 delegate_shm!(WinitEngine);
 
 impl DmabufHandler for WinitEngine {
-    fn dmabuf_state(&mut self) -> &mut smithay::wayland::dmabuf::DmabufState {
+
+    fn dmabuf_state(&mut self) -> &mut DmabufState {
         &mut self.dmabuf_state.as_mut().unwrap().0
     }
 
-    fn dmabuf_imported(&mut self, _global: &smithay::wayland::dmabuf::DmabufGlobal, dmabuf: smithay::backend::allocator::dmabuf::Dmabuf) -> Result<(), smithay::wayland::dmabuf::ImportError> {
-        self.renderer.import_dmabuf(&dmabuf, None).map(|_| ()).map_err(|_| smithay::wayland::dmabuf::ImportError::Failed)
+    fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf) -> Result<(), ImportError> {
+        self.renderer.import_dmabuf(&dmabuf, None).map(|_| ()).map_err(|_| ImportError::Failed)
     }
+
 }
 
 delegate_dmabuf!(WinitEngine);
 
-impl WinitEngine {
-
-    fn make_context (logger: &Logger, egl: &EGLContext) -> Result<EGLContext, Box<dyn Error>> {
-        Ok(EGLContext::new_shared_with_config(egl.display(), egl, GlAttributes {
-            version: (3, 0), profile: None, vsync: true, debug: cfg!(debug_assertions),
-        }, Default::default(), logger.clone())?)
-    }
-
-    fn make_renderer (logger: &Logger, egl: &EGLContext) -> Result<Gles2Renderer, Box<dyn Error>> {
-        let egl = Self::make_context(logger, egl)?;
-        Ok(unsafe { Gles2Renderer::new(egl, logger.clone()) }?)
-    }
-
-    pub fn window_get (&mut self, window_id: &WindowId) -> &mut WinitHostWindow {
-        self.outputs.get_mut(&window_id).unwrap()
-    }
-
-    pub fn dispatch (&mut self, mut callback: impl FnMut(ScreenId, WinitEvent))
-        -> Result<(), WinitHostError>
-    {
-        let mut closed = false;
-        if self.started.is_none() {
-            let event = InputEvent::DeviceAdded { device: WinitVirtualDevice };
-            callback(0, WinitEvent::Input(event));
-            self.started = Some(Instant::now());
-        }
-        let started = &self.started.unwrap();
-        let logger  = &self.logger;
-        let outputs = &mut self.outputs;
-        self.events.run_return(move |event, _target, control_flow| {
-            //debug!(self.logger, "{target:?}");
-            match event {
-                Event::RedrawEventsCleared => {
-                    *control_flow = ControlFlow::Exit;
-                }
-                Event::RedrawRequested(_id) => {
-                    callback(0, WinitEvent::Refresh);
-                }
-                Event::WindowEvent { window_id, event } => match outputs.get_mut(&window_id) {
-                    Some(window) => {
-                        window.dispatch(started, event, &mut callback);
-                        if window.closing {
-                            outputs.remove(&window_id);
-                            closed = true;
-                        }
-                    },
-                    None => {
-                        warn!(logger, "Received event for unknown window id {window_id:?}")
-                    }
-                }
-                _ => {}
-            }
-        });
-        if closed {
-            Err(WinitHostError::WindowClosed)
-        } else {
-            Ok(())
-        }
-    }
-
-}
-
+/// A window created by Winit, displaying a compositor output
 #[derive(Debug)]
 pub struct WinitHostWindow {
     logger:   Logger,
@@ -291,7 +208,8 @@ pub struct WinitHostWindow {
     output:   Output,
 }
 
-impl WinitHostWindow {
+/// Build a host window
+impl<'a> WinitHostWindow {
 
     /// Create a new host window
     pub fn new (
@@ -341,24 +259,6 @@ impl WinitHostWindow {
     /// Get the window id
     pub fn id (&self) -> WindowId {
         self.window.id()
-    }
-
-    /// Render this output into its corresponding host window
-    pub fn render (
-        &self,
-        renderer: &mut Gles2Renderer,
-        state:    &mut impl Widget<WinitRenderData>
-    ) -> Result<(), Box<dyn Error>> {
-        if let Some(size) = self.resized.take() {
-            self.surface.resize(size.w, size.h, 0, 0);
-        }
-        renderer.bind(self.surface.clone())?;
-        let size = self.surface.get_size().unwrap();
-        state.render(RenderContext {
-            renderer, output: &self.output, data: (self.screen, size)
-        })?;
-        self.surface.swap_buffers(None)?;
-        Ok(())
     }
 
     /// Build the window
@@ -433,134 +333,6 @@ impl WinitHostWindow {
         ).map_err(EGLError::CreationFailed)?)
     }
 
-    /// Dispatch input events from the host window to the hosted compositor.
-    fn dispatch (
-        &mut self,
-        started:  &Instant,
-        event:    WindowEvent,
-        callback: &mut impl FnMut(ScreenId, WinitEvent)
-    ) -> () {
-        //debug!(self.logger, "Winit Window Event: {self:?} {event:?}");
-        let duration = Instant::now().duration_since(*started);
-        let nanos = duration.subsec_nanos() as u64;
-        let time = ((1000 * duration.as_secs()) + (nanos / 1_000_000)) as u32;
-        match event {
-
-            WindowEvent::Resized(psize) => {
-                trace!(self.logger, "Resizing window to {:?}", psize);
-                let scale_factor = self.window.scale_factor();
-                let mut wsize    = self.size.borrow_mut();
-                let (pw, ph): (u32, u32) = psize.into();
-                wsize.physical_size = (pw as i32, ph as i32).into();
-                wsize.scale_factor  = scale_factor;
-                self.resized.set(Some(wsize.physical_size));
-                callback(self.screen, WinitEvent::Resized {
-                    size: wsize.physical_size,
-                    scale_factor,
-                });
-            }
-
-            WindowEvent::Focused(focus) => {
-                callback(self.screen, WinitEvent::Focus(focus));
-            }
-
-            WindowEvent::ScaleFactorChanged { scale_factor, new_inner_size, } => {
-                let mut wsize = self.size.borrow_mut();
-                wsize.scale_factor = scale_factor;
-                let (pw, ph): (u32, u32) = (*new_inner_size).into();
-                self.resized.set(Some((pw as i32, ph as i32).into()));
-                callback(self.screen, WinitEvent::Resized {
-                    size: (pw as i32, ph as i32).into(),
-                    scale_factor: wsize.scale_factor,
-                });
-            }
-
-            WindowEvent::KeyboardInput { input, .. } => {
-                let KeyboardInput { scancode, state, .. } = input;
-                match state {
-                    ElementState::Pressed => self.rollover += 1,
-                    ElementState::Released => {
-                        self.rollover = self.rollover.checked_sub(1).unwrap_or(0)
-                    }
-                };
-                callback(self.screen, WinitEvent::Input(InputEvent::Keyboard {
-                    event: WinitKeyboardInputEvent {
-                        time, key: scancode, count: self.rollover, state,
-                    },
-                }));
-            }
-
-            WindowEvent::CursorMoved { position, .. } => {
-                let lpos = position.to_logical(self.size.borrow().scale_factor);
-                callback(self.screen, WinitEvent::Input(InputEvent::PointerMotionAbsolute {
-                    event: WinitMouseMovedEvent {
-                        size: self.size.clone(), time, logical_position: lpos,
-                    },
-                }));
-            }
-
-            WindowEvent::MouseWheel { delta, .. } => {
-                let event = WinitMouseWheelEvent { time, delta };
-                callback(self.screen, WinitEvent::Input(InputEvent::PointerAxis { event }));
-            }
-
-            WindowEvent::MouseInput { state, button, .. } => {
-                callback(self.screen, WinitEvent::Input(InputEvent::PointerButton {
-                    event: WinitMouseInputEvent {
-                        time, button, state, is_x11: self.is_x11,
-                    },
-                }));
-            }
-
-            WindowEvent::Touch(Touch { phase: TouchPhase::Started, location, id, .. }) => {
-                let location = location.to_logical(self.size.borrow().scale_factor);
-                callback(self.screen, WinitEvent::Input(InputEvent::TouchDown {
-                    event: WinitTouchStartedEvent {
-                        size: self.size.clone(), time, location, id,
-                    },
-                }));
-            }
-
-            WindowEvent::Touch(Touch { phase: TouchPhase::Moved, location, id, .. }) => {
-                let location = location.to_logical(self.size.borrow().scale_factor);
-                callback(self.screen, WinitEvent::Input(InputEvent::TouchMotion {
-                    event: WinitTouchMovedEvent {
-                        size: self.size.clone(), time, location, id,
-                    },
-                }));
-            }
-
-            WindowEvent::Touch(Touch { phase: TouchPhase::Ended, location, id, .. }) => {
-                let location = location.to_logical(self.size.borrow().scale_factor);
-                callback(self.screen, WinitEvent::Input(InputEvent::TouchMotion {
-                    event: WinitTouchMovedEvent {
-                        size: self.size.clone(), time, location, id,
-                    },
-                }));
-                callback(self.screen, WinitEvent::Input(InputEvent::TouchUp {
-                    event: WinitTouchEndedEvent { time, id },
-                }))
-            }
-
-            WindowEvent::Touch(Touch { phase: TouchPhase::Cancelled, id, .. }) => {
-                callback(self.screen, WinitEvent::Input(InputEvent::TouchCancel {
-                    event: WinitTouchCancelledEvent { time, id },
-                }));
-            }
-
-            WindowEvent::CloseRequested | WindowEvent::Destroyed => {
-                callback(self.screen, WinitEvent::Input(InputEvent::DeviceRemoved {
-                    device: WinitVirtualDevice,
-                }));
-                warn!(self.logger, "Window closed");
-                self.closing = true;
-            }
-
-            _ => {}
-
-        }
-    }
-
 }
 
 #[derive(Debug)]
@@ -575,3 +347,14 @@ impl std::fmt::Display for WinitHostError {
 }
 
 impl std::error::Error for WinitHostError {}
+
+fn make_renderer (logger: &Logger, egl: &EGLContext) -> Result<Gles2Renderer, Box<dyn Error>> {
+    let egl = make_context(logger, egl)?;
+    Ok(unsafe { Gles2Renderer::new(egl, logger.clone()) }?)
+}
+
+fn make_context (logger: &Logger, egl: &EGLContext) -> Result<EGLContext, Box<dyn Error>> {
+    Ok(EGLContext::new_shared_with_config(egl.display(), egl, GlAttributes {
+        version: (3, 0), profile: None, vsync: true, debug: cfg!(debug_assertions),
+    }, Default::default(), logger.clone())?)
+}

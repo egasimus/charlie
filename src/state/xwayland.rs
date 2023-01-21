@@ -4,41 +4,74 @@ use std::{collections::HashMap, convert::TryFrom, os::unix::net::UnixStream, syn
 
 use x11rb::protocol::xproto::{ConfigureRequestEvent, ClientMessageEvent};
 
+atom_manager! {
+    Atoms: AtomsCookie {
+        WM_S0,
+        WL_SURFACE_ID,
+        _ANVIL_CLOSE_CONNECTION,
+    }
+}
+
+pub type Unpaired = HashMap<u32, (X11Window, Point<i32, Logical>)>;
+
 pub fn init_xwayland <T> (
     logger:  &Logger,
-    handle:  LoopHandle<'static, T>,
+    events:  &LoopHandle<'static, T>,
     display: &DisplayHandle,
-    ready:   &impl Fn(&mut T)->Result<(), Box<dyn Error>>
+    ready:   Box<dyn Fn(&mut T)->Result<(), Box<dyn Error>>>
 ) -> Result<(), Box<dyn Error>> {
     let (xwayland, channel) = XWayland::new(logger.clone(), &display);
-    handle.insert_source(channel, move |event, _, app| match event {
+    let cb_logger  = logger.clone();
+    let cb_events  = events.clone();
+    let cb_display = display.clone();
+    events.insert_source(channel, move |event, _, app| match event {
         XWaylandEvent::Ready { connection, client, .. } => {
-            let (x11conn, x11atoms, x11source) = x11_connect(
-                &logger, &display, connection
-            ).unwrap();
+            let (x11conn, x11atoms, x11source) = x11_connect(&cb_logger, &cb_display.clone(), connection)
+                .unwrap();
             let mut unpaired: Unpaired = Default::default();
-            handle.insert_source(x11source, move |event, _, state| {
-                debug!(logger, "X11: Got event {:?}", event);
+            cb_events.clone().insert_source(x11source, move |event, _, state| {
+                debug!(cb_logger, "X11: Got event {:?}", event);
                 x11_handle(
-                    logger,
-                    &display,
-                    client,
-                    x11conn,
+                    &cb_logger,
+                    &cb_display.clone(),
+                    &client,
+                    &x11conn,
                     x11atoms,
                     event, 
                     &mut unpaired
                 ).unwrap();
             });
-            debug!(logger, "DISPLAY={:?}", ::std::env::var("DISPLAY"));
+            debug!(cb_logger, "DISPLAY={:?}", ::std::env::var("DISPLAY"));
             ready(app).unwrap()
         },
         XWaylandEvent::Exited => {
-            crit!(logger, "XWayland exited")
+            crit!(cb_logger, "XWayland exited")
         },
     })?;
-    xwayland.start(handle.clone())?;
+    xwayland.start(events.clone())?;
     Ok(())
 }
+
+pub fn x11_handle (
+    logger:   &Logger,
+    display:  &DisplayHandle,
+    client:   &Client,
+    conn:     &Arc<RustConnection>,
+    atoms:    Atoms,
+    event:    X11Event,
+    unpaired: &mut Unpaired,
+) -> Result<(), ReplyOrIdError> {
+    debug!(logger, "X11: Got event {:?}", event);
+    match event {
+        X11Event::ConfigureRequest(r) => { x11_configure(conn, r)?; }
+        X11Event::MapRequest(r) => { conn.map_window(r.window)?; }
+        X11Event::ClientMessage(msg) => { x11_client_message(logger, display, client, &conn, msg, atoms, unpaired)?; }
+        _ => {}
+    }
+    conn.flush()?;
+    Ok(())
+}
+
 
 pub fn x11_connect (
     logger:     &Logger,
@@ -70,13 +103,13 @@ pub fn x11_connect (
     // XWaylandState wants us to do this to function properly...?
     conn.composite_redirect_subwindows(screen.root, Redirect::MANUAL)?;
     conn.flush()?;
-    let conn     = Arc::new(conn);
+    let conn = Arc::new(conn);
     //let unpaired = Default::default();
-    Ok((conn, atoms, X11Source::new(conn, win, atoms._ANVIL_CLOSE_CONNECTION, logger.clone())))
+    Ok((conn.clone(), atoms, X11Source::new(conn, win, atoms._ANVIL_CLOSE_CONNECTION, logger.clone())))
 }
 
 pub fn x11_configure (
-    conn: Arc<RustConnection>,
+    conn: &Arc<RustConnection>,
     r:    ConfigureRequestEvent
 ) -> Result<(), ReplyOrIdError> {
     // Just grant the wish
@@ -109,8 +142,8 @@ pub fn x11_configure (
 pub fn x11_client_message (
     logger:   &Logger,
     display:  &DisplayHandle,
-    client:   Client,
-    conn:     Arc<RustConnection>,
+    client:   &Client,
+    conn:     &Arc<RustConnection>,
     msg:      ClientMessageEvent,
     atoms:    Atoms,
     unpaired: &mut Unpaired
@@ -172,36 +205,6 @@ pub fn x11_new_window (
     let x11surface = X11Surface { surface };
     //space.map_element(Window::new(Kind::X11(x11surface)), location, true);
 }
-
-pub fn x11_handle (
-    logger:   &Logger,
-    display:  &DisplayHandle,
-    client:   Client,
-    conn:     Arc<RustConnection>,
-    atoms:    Atoms,
-    event:    X11Event,
-    unpaired: &mut Unpaired,
-) -> Result<(), ReplyOrIdError> {
-    debug!(logger, "X11: Got event {:?}", event);
-    match event {
-        X11Event::ConfigureRequest(r) => { x11_configure(conn, r)?; }
-        X11Event::MapRequest(r) => { conn.map_window(r.window)?; }
-        X11Event::ClientMessage(msg) => { x11_client_message(logger, display, client, conn, msg, atoms, unpaired)?; }
-        _ => {}
-    }
-    conn.flush()?;
-    Ok(())
-}
-
-atom_manager! {
-    Atoms: AtomsCookie {
-        WM_S0,
-        WL_SURFACE_ID,
-        _ANVIL_CLOSE_CONNECTION,
-    }
-}
-
-pub type Unpaired = HashMap<u32, (X11Window, Point<i32, Logical>)>;
 
 // Called when a WlSurface commits.
 //pub fn commit_hook (

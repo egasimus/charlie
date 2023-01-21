@@ -1,6 +1,7 @@
 pub(crate) use crate::{
     traits::*,
-    state::{App, AppState, desktop::ScreenState},
+    app::App,
+    state::{AppState, desktop::ScreenState},
 };
 
 pub(crate) use std::{
@@ -12,7 +13,8 @@ pub(crate) use std::{
     path::Path,
     collections::{HashMap, hash_map::Entry},
     os::fd::AsRawFd,
-    any::TypeId
+    any::TypeId,
+    marker::PhantomData
 };
 
 pub(crate) use slog::{Logger, Drain, o, info, debug, warn, trace, error, crit};
@@ -95,3 +97,5 @@ pub fn import_bitmap (renderer: &mut Gles2Renderer, path: impl AsRef<Path>)
         Gles2Texture::from_raw(renderer, tex, size.into())
     })
 }
+
+pub type ScreenId = usize;

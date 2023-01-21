@@ -2,6 +2,8 @@ pub(crate) use crate::prelude::*;
 
 pub(crate) use super::desktop::Desktop;
 
+pub(crate) type ScreenId = usize;
+
 pub(crate) use smithay::{
     delegate_compositor,
     delegate_data_device,
@@ -76,7 +78,6 @@ pub(crate) use smithay::{
         }
     },
     wayland::{
-        buffer::BufferHandler,
         compositor::{
             self,
             CompositorHandler,
@@ -122,4 +123,3 @@ pub(crate) use smithay::{
         x11rb::X11Source,
     },
 };
-

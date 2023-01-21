@@ -6,17 +6,50 @@ use smithay::{
     backend::input::{
         Event,
         KeyState,
-        KeyboardKeyEvent
+        KeyboardKeyEvent,
+        //AbsolutePositionEvent,
+        PointerButtonEvent,
+        PointerMotionEvent,
+        PointerAxisEvent
     },
-    input::keyboard::{
-        keysyms,
-        KeyboardHandle,
-        FilterResult,
-    },
+    input::{
+        pointer::{
+            PointerHandle,
+            CursorImageStatus     as Status,
+            CursorImageAttributes as Attributes
+        },
+        keyboard::{
+            keysyms,
+            KeyboardHandle,
+            FilterResult,
+        },
+    }
 };
 
 delegate_seat!(AppState);
 delegate_data_device!(AppState);
+
+impl<B: InputBackend> Update<(InputEvent<B>, ScreenId)> for AppState {
+    fn update (&mut self, (event, screen_id): (InputEvent<B>, ScreenId)) -> StdResult<()> {
+        handle_input::<B>(self, event, screen_id)
+    }
+}
+
+fn handle_input <B: InputBackend> (state: &mut AppState, event: InputEvent<B>, screen_id: ScreenId) -> StdResult<()> {
+    Ok(match event {
+        InputEvent::PointerMotion { event, .. }
+            => Pointer::on_move_relative::<B>(state, 0, event, screen_id),
+        InputEvent::PointerMotionAbsolute { event, .. }
+            => Pointer::on_move_absolute::<B>(state, 0, event, screen_id),
+        InputEvent::PointerButton { event, .. }
+            => Pointer::on_button::<B>(state, 0, event, screen_id),
+        InputEvent::PointerAxis { event, .. }
+            => Pointer::on_axis::<B>(state, 0, event, screen_id),
+        InputEvent::Keyboard { event, .. }
+            => Keyboard::on_key::<B>(state, 0, event, screen_id),
+        _ => {}
+    })
+}
 
 pub struct Input {
     logger:      Logger,
@@ -30,12 +63,13 @@ pub struct Input {
 }
 
 impl Input {
-    pub fn new (engine: &impl Engine, handle: &DisplayHandle) -> Result<Self, Box<dyn Error>> {
+
+    pub fn new (logger: &Logger, handle: &DisplayHandle) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
-            logger:      engine.logger(),
+            logger:      logger.clone(),
             handle:      handle.clone(),
             seat:        SeatState::new(),
-            data_device: DataDeviceState::new::<AppState, _>(&handle, engine.logger()),
+            data_device: DataDeviceState::new::<AppState, _>(&handle, logger.clone()),
             pointers:    vec![],
             keyboards:   vec![],
         })
@@ -54,6 +88,7 @@ impl Input {
         seat.add_input_method(XkbConfig::default(), 200, 25);
         Ok(seat)
     }
+
 }
 
 impl SeatHandler for AppState {
@@ -189,25 +224,6 @@ impl Keyboard {
 
 }
 
-use super::prelude::*;
-
-use smithay::{
-    backend::input::{
-        Event,
-        //AbsolutePositionEvent,
-        PointerButtonEvent,
-        PointerMotionEvent,
-        PointerAxisEvent
-    },
-    input::{
-        pointer::{
-            PointerHandle,
-            CursorImageStatus     as Status,
-            CursorImageAttributes as Attributes
-        }
-    }
-};
-
 pub struct Pointer {
     logger:        Logger,
     pub handle:    PointerHandle<AppState>,
@@ -255,31 +271,6 @@ impl Pointer {
         };
         let location = self.location - hotspot.to_f64();
         (visible, location)
-    }
-
-    pub fn render (
-        &self,
-        frame:  &mut Gles2Frame,
-        size:   Size<i32, Physical>,
-        screen: &ScreenState
-    ) -> Result<(), Box<dyn Error>> {
-        let damage = Rectangle::<i32, Physical>::from_loc_and_size(
-            Point::<i32, Physical>::from((0i32, 0i32)),
-            size
-        );
-        let x = self.location.x;
-        let y = self.location.y;
-        let location = Point::<f64, Logical>::from((x, y)).to_physical(1.0).to_i32_round();
-        //let size = self.texture.size();
-        Ok(frame.render_texture_at(
-            &self.texture,
-            location,
-            1,
-            1.0,
-            Transform::Normal,
-            &[damage],
-            1.0
-        )?)
     }
 
     pub fn on_move_relative<B: InputBackend>(
@@ -410,6 +401,35 @@ impl Pointer {
         //}
 
         //self.pointer.axis(frame);
+    }
+
+}
+
+/// Render this pointer
+impl<'a> Render<'a, (&'a mut Gles2Frame<'a>, Size<i32, Physical>, &'a ScreenState)> for Pointer {
+
+    /// Render this pointer
+    fn render (&'a mut self, params: &'a mut (&'a mut Gles2Frame<'a>, Size<i32, Physical>, &'a ScreenState))
+        -> StdResult<()>
+    {
+        let (frame, size, screen) = params;
+        let damage = Rectangle::<i32, Physical>::from_loc_and_size(
+            Point::<i32, Physical>::from((0i32, 0i32)),
+            *size
+        );
+        let x = self.location.x;
+        let y = self.location.y;
+        let location = Point::<f64, Logical>::from((x, y)).to_physical(1.0).to_i32_round();
+        //let size = self.texture.size();
+        Ok(frame.render_texture_at(
+            &self.texture,
+            location,
+            1,
+            1.0,
+            Transform::Normal,
+            &[damage],
+            1.0
+        )?)
     }
 
 }
