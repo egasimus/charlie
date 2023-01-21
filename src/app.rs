@@ -7,40 +7,28 @@ use smithay::{
 
 /// Binds an Engine representing the runtime environment
 /// to a root Widget representing the application state.
-pub struct App<E, S, U, R> where
-    E: Engine<'static, U, R, S>,
-    S: Widget<'static, U, R> + 'static,
-    U: 'static,
-    R: 'static
-{
-    _update: PhantomData<U>,
-    _render: PhantomData<R>,
+pub struct App<E: Engine, W: Widget + 'static> where {
     logger:  Logger,
-    display: Display<Shared<Self>>,
-    events:  EventLoop<'static, Shared<Self>>,
-    engine:  E,
-    state:   S,
+    display: Display<Self>,
+    events:  EventLoop<'static, Self>,
+    pub engine: E,
+    pub state:  W,
 }
 
-impl<E, S, U, R> App<E, S, U, R> where
-    E: Engine<'static, U, R, S>,
-    S: Widget<'static, U, R> + 'static,
-{
+impl<E: Engine, W: Widget + 'static> App<E, W> {
 
     pub fn new () -> StdResult<Self> {
         // Create the logger
         let (logger, _guard) = init_log();
         // Create the event loop
-        let events = EventLoop::<'static, (E, S)>::try_new()?;
+        let events = EventLoop::try_new()?;
         // Create the display
-        let display = Display::<(E, S)>::new()?;
+        let display = Display::new()?;
         // Create the engine
-        let engine = E::new(&logger, &display.handle())?;
+        let engine = E::new::<W>(&logger, &display.handle())?;
         // Create the state
-        let state = S::new(&logger, &display.handle(), &events.handle())?;
+        let state = W::new(&logger, &display.handle(), &events.handle())?;
         Ok(Self {
-            _update: PhantomData::default(),
-            _render: PhantomData::default(),
             logger,
             display,
             events,
@@ -81,24 +69,24 @@ impl<E, S, U, R> App<E, S, U, R> where
         let socket_name = socket.socket_name().to_os_string();
         std::env::set_var("WAYLAND_DISPLAY", &socket_name);
         // Put the whole struct in a smart pointer
-        let app = Rc::new(RefCell::new(self));
         // Run main loop
         loop {
             // Respond to user input
-            if let Err(e) = app.engine.update(app.state) {
+            if let Err(e) = self.engine.update(self.state) {
                 crit!(logger, "Update error: {e}");
                 break
             }
             // Render display
-            if let Err(e) = app.engine.render(&mut app.state) {
+            if let Err(e) = self.engine.render(&mut self.state) {
                 crit!(logger, "Render error: {e}");
                 break
             }
             // Flush display/client messages
-            app.display.flush_clients()?;
+            self.display.flush_clients()?;
             // Dispatch state to next event loop tick
-            app.events.dispatch(Some(Duration::from_millis(1)), app.clone());
+            self.events.dispatch(Some(Duration::from_millis(1)), &mut self);
         }
+        Ok(())
     }
 
 }

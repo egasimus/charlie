@@ -17,14 +17,20 @@ pub trait Render<'r, RenderParams> {
 }
 
 /// Marker trait for Render + Update
-pub trait Widget<'a, U, R>: Update<U> + Render<'a, R> {}
+pub trait Widget {
+    fn new <T> (
+        logger:  &Logger,
+        display: &DisplayHandle,
+        events:  &LoopHandle<'static, T>
+    ) -> StdResult<Self> where Self: Sized;
+}
 
-/// All types that implement Render + Update are widgets
-impl<'a, U, R, W> Widget<'a, U, R> for W where W: Render<'a, R> + Update<U> {}
+///// All types that implement Render + Update are widgets
+//impl<'a, U, R, W> Widget<'a, U, R> for W where W: Render<'a, R> + Update<U> {}
 
-pub trait Engine<'r, U, R, W: Widget<'r, U, R>>: Widget<'r, W, W> + Outputs + Inputs + 'static {
+pub trait Engine: Outputs + Inputs + 'static {
     /// Create a new instance of this engine
-    fn new (logger: &Logger, display: &DisplayHandle)
+    fn new <W: Widget> (logger: &Logger, display: &DisplayHandle)
         -> Result<Self, Box<dyn Error>> where Self: Sized;
     /// Obtain a copy of the logger.
     fn logger (&self)
@@ -32,7 +38,13 @@ pub trait Engine<'r, U, R, W: Widget<'r, U, R>>: Widget<'r, W, W> + Outputs + In
     /// Obtain a mutable reference to the renderer.
     fn renderer (&mut self)
         -> &mut Gles2Renderer;
+    fn update <W> (&mut self, context: W) -> StdResult<()>;
+    fn render <W> (&mut self, context: &mut W) -> StdResult<()>;
 }
+
+///// All static instances of types that implement Render + Update + Outputs + Inputs are engines
+//impl<'a, U, R, E> Engine<'a, U, R> for E where E: Update<U> + Render<'a, R> + Outputs + Inputs {}
+// TODO: All static instances of widgets can be engines if input/output management is attached?
 
 pub trait Outputs {
     /// Called when an output is added

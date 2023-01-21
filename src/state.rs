@@ -20,27 +20,6 @@ pub struct AppState {
 
 impl AppState {
 
-    pub fn new <T> (
-        logger:  &Logger,
-        display: &DisplayHandle,
-        events:  &LoopHandle<'static, T>
-    ) -> Result<Self, Box<dyn Error>> {
-
-        // Init xwayland
-        crate::state::xwayland::init_xwayland(
-            logger, events, display,
-            Box::new(|x|Ok(()))//x.1.ready())
-        )?;
-
-        Ok(Self {
-            logger:  logger.clone(),
-            desktop: Desktop::new(logger, display)?,
-            input:   Input::new(logger, display)?,
-            startup: vec![],
-        })
-
-    }
-
     /// When the app is ready to run, this spawns the startup processes.
     pub fn ready (&self) -> Result<(), Box<dyn Error>> {
         debug!(self.logger, "DISPLAY={:?}", ::std::env::var("DISPLAY"));
@@ -53,6 +32,38 @@ impl AppState {
         Ok(())
     }
 
+    pub fn startup (&mut self, cmd: impl AsRef<str>, args: &[&str]) -> StdResult<&mut Self> {
+        Ok(self)
+    }
+
+    pub fn output (&mut self, cmd: impl AsRef<str>, w: i32, h: i32, x: f64, y: f64) -> StdResult<&mut Self> {
+        Ok(self)
+    }
+
+    pub fn input (&mut self, cmd: impl AsRef<str>, cursor: impl AsRef<str>) -> StdResult<&mut Self> {
+        Ok(self)
+    }
+
+}
+
+impl Widget for AppState {
+    fn new <T> (
+        logger:  &Logger,
+        display: &DisplayHandle,
+        events:  &LoopHandle<'static, T>
+    ) -> Result<Self, Box<dyn Error>> {
+        // Init xwayland
+        crate::state::xwayland::init_xwayland(
+            logger, events, display,
+            Box::new(|x|Ok(()))//x.1.ready())
+        )?;
+        Ok(Self {
+            logger:  logger.clone(),
+            desktop: Desktop::new(logger, display)?,
+            input:   Input::new(logger, display)?,
+            startup: vec![],
+        })
+    }
 }
 
 /// Render the compositor on a given output

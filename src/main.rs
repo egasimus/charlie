@@ -11,21 +11,17 @@ use crate::engines::winit::WinitEngine;
 
 fn main () -> StdResult<()> {
 
-    App::<WinitEngine, AppState, _, _>::new()
+    App::<WinitEngine, AppState>::new()?.with(|app|{
 
-        .with(|app|{
+        app.state
+            .startup("glxgears", &[])?
+            .startup("wezterm", &[])?
+            .output("Alice",  720, 540, 0.0, 0.0)?
+            .output("Bob",    480, 720, 0.0, 0.0)?
+            .input("Charlie", "data/cursor.png")?;
 
-            app.state
-                .startup("glxgears", &[])
-                .startup("wezterm", &[])
-                .output("Alice",  720, 540, 0.0, 0.0)?
-                .output("Bob",    480, 720, 0.0, 0.0)?
-                .input("Charlie", "data/cursor.png")?;
+        Ok(app)
 
-            Ok(app)
-
-        })?
-
-        .run()
+    })?.run()
 
 }

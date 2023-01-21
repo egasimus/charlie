@@ -1,76 +1,174 @@
 use crate::prelude::*;
+use super::*;
+use smithay::backend::renderer::Bind;
 
-use super::{WinitEngine, WinitHostWindow, WinitHostError};
+/// A window created by Winit, displaying a compositor output
+#[derive(Debug)]
+pub struct WinitHostWindow {
+    logger:   Logger,
+    title:    String,
+    width:    i32,
+    height:   i32,
+    window:   WinitWindow,
+    closing:  bool,
+    rollover: u32,
+    surface:  Rc<EGLSurface>,
+    resized:  Rc<Cell<Option<Size<i32, Physical>>>>,
+    size:     Rc<RefCell<WindowSize>>,
+    is_x11:   bool,
+    /// Which viewport is rendered to this window
+    screen:   ScreenId,
+    /// The wayland output
+    output:   Output,
+}
 
-use smithay::{
-    backend::{
-        input::InputEvent,
-        winit::{
-            WinitInput,
-            WinitEvent,
-            WinitVirtualDevice,
-            WinitKeyboardInputEvent,
-            WinitMouseMovedEvent, WinitMouseWheelEvent, WinitMouseInputEvent,
-            WinitTouchStartedEvent, WinitTouchMovedEvent, WinitTouchEndedEvent, WinitTouchCancelledEvent
-        }
-    },
-    reexports::{
-        winit::{
-            event::{Event, WindowEvent, ElementState, KeyboardInput, Touch, TouchPhase},
-            event_loop::ControlFlow,
-            platform::run_return::EventLoopExtRunReturn,
-        }
+/// Build a host window
+impl<'a> WinitHostWindow {
+
+    /// Create a new host window
+    pub fn new (
+        logger: &Logger,
+        events: &WinitEventLoop<()>,
+        egl:    &EGLContext,
+        title:  &str,
+        width:  i32,
+        height: i32,
+        screen: ScreenId
+    ) -> Result<Self, Box<dyn Error>> {
+
+        let (w, h, hz, subpixel) = (width, height, 60_000, Subpixel::Unknown);
+
+        let output = Output::new(title.to_string(), PhysicalProperties {
+            size: (w, h).into(), subpixel, make: "Smithay".into(), model: "Winit".into()
+        }, logger.clone());
+
+        output.change_current_state(
+            Some(Mode { size: (w, h).into(), refresh: hz }), None, None, None
+        );
+
+        let window = Self::build(logger, events, title, width, height)?;
+
+        let (w, h): (u32, u32) = window.inner_size().into();
+
+        Ok(Self {
+            logger:   logger.clone(),
+            title:    title.into(),
+            closing:  false,
+            rollover: 0,
+            size: Rc::new(RefCell::new(WindowSize {
+                physical_size: (w as i32, h as i32).into(),
+                scale_factor:  window.scale_factor(),
+            })),
+            width,
+            height,
+            resized: Rc::new(Cell::new(None)),
+            surface: Self::surface(logger, egl, &window)?,
+            is_x11:  window.wayland_surface().is_none(),
+            window,
+            screen,
+            output
+        })
     }
-};
 
-type ScreenId = usize;
+    /// Get the window id
+    pub fn id (&self) -> WindowId {
+        self.window.id()
+    }
 
-pub type WinitUpdateContext = (
-    InputEvent<WinitInput>,
-    ScreenId
-);
+    pub fn is_closing (&self) -> bool {
+        self.closing
+    }
 
-impl Update<WinitUpdateContext> for WinitEngine {
-    fn update (&mut self, mut callback: WinitUpdateContext) -> StdResult<()> {
-        let mut closed = false;
-        if self.started.is_none() {
-            let event = InputEvent::DeviceAdded { device: WinitVirtualDevice };
-            callback(0, WinitEvent::Input(event));
-            self.started = Some(Instant::now());
-        }
-        let started = &self.started.unwrap();
-        let logger  = &self.logger;
-        let outputs = &mut self.outputs;
-        self.events.run_return(move |event, _target, control_flow| {
-            //debug!(self.logger, "{target:?}");
-            match event {
-                Event::RedrawEventsCleared => {
-                    *control_flow = ControlFlow::Exit;
-                }
-                Event::RedrawRequested(_id) => {
-                    callback(0, WinitEvent::Refresh);
-                }
-                Event::WindowEvent { window_id, event } => match outputs.get_mut(&window_id) {
-                    Some(window) => {
-                        window.update((started, event, &mut callback));
-                        if window.closing {
-                            outputs.remove(&window_id);
-                            closed = true;
-                        }
-                    },
-                    None => {
-                        warn!(logger, "Received event for unknown window id {window_id:?}")
-                    }
-                }
-                _ => {}
-            }
-        });
-        if closed {
-            Err(WinitHostError::WindowClosed.into())
+    /// Build the window
+    fn build (
+        logger: &Logger,
+        events: &WinitEventLoop<()>,
+        title:  &str,
+        width:  i32,
+        height: i32
+    ) -> Result<WinitWindow, Box<dyn Error>> {
+        debug!(logger, "Building Winit window: {title} ({width}x{height})");
+        let window = WindowBuilder::new()
+            .with_inner_size(LogicalSize::new(width, height))
+            .with_title(title)
+            .with_visible(true)
+            .build(events)
+            .map_err(WinitError::InitFailed)?;
+        Ok(window)
+    }
+
+    /// Obtain the window surface (varies on whether winit is running in wayland or x11)
+    fn surface (
+        logger: &Logger,
+        egl:    &EGLContext,
+        window: &WinitWindow
+    ) -> Result<Rc<EGLSurface>, Box<dyn Error>> {
+        debug!(logger, "Setting up Winit window: {window:?}");
+        debug!(logger, "Created EGL context for Winit window");
+        let surface = if let Some(surface) = window.wayland_surface() {
+            Self::surface_wl(logger, &egl, window.inner_size().into(), surface)?
+        } else if let Some(xlib_window) = window.xlib_window().map(XlibWindow) {
+            Self::surface_x11(logger, &egl, xlib_window)?
         } else {
-            Ok(())
-        }
+            unreachable!("No backends for winit other then Wayland and X11 are supported")
+        };
+        let _ = egl.unbind()?;
+        Ok(Rc::new(surface))
     }
+
+    /// Obtain the window surface when running in wayland
+    fn surface_wl (
+        logger:          &Logger,
+        egl:             &EGLContext,
+        (width, height): (i32, i32),
+        surface:         *mut std::os::raw::c_void
+    ) -> Result<EGLSurface, Box<dyn Error>> {
+        debug!(logger, "Using Wayland backend for Winit window");
+        Ok(EGLSurface::new(
+            egl.display(),
+            egl.pixel_format().unwrap(),
+            egl.config_id(),
+            unsafe {
+                wegl::WlEglSurface::new_from_raw(surface as *mut _, width, height)
+            }.map_err(|err| WinitError::Surface(err.into()))?,
+            logger.clone(),
+        )?)
+    }
+
+    /// Obtain the window surface when running in X11
+    fn surface_x11 (
+        logger: &Logger,
+        egl:    &EGLContext,
+        window: XlibWindow
+    ) -> Result<EGLSurface, Box<dyn Error>> {
+        debug!(logger, "Using X11 backend for Winit window {window:?}");
+        Ok(EGLSurface::new(
+            egl.display(),
+            egl.pixel_format().unwrap(),
+            egl.config_id(),
+            window,
+            logger.clone(),
+        ).map_err(EGLError::CreationFailed)?)
+    }
+
+}
+
+/// Render a compositor output into this host window
+impl<'r, W> Render<'r, (&'r mut WinitEngine, W)> for WinitHostWindow {
+
+    /// Render the app state on this output
+    fn render (&'r mut self, params: &'r mut (&'r mut WinitEngine, W)) -> StdResult<()> {
+        let (engine, state) = params;
+        if let Some(size) = self.resized.take() {
+            self.surface.resize(size.w, size.h, 0, 0);
+        }
+        engine.renderer.bind(self.surface.clone())?;
+        let size = self.surface.get_size().unwrap();
+        state.render((&mut engine.renderer, &self.output, size, self.screen))?;
+        self.surface.swap_buffers(None)?;
+        Ok(())
+    }
+
 }
 
 impl<'a, T> Update<(&'a Instant, WindowEvent<'a>, &'a mut T)> for WinitHostWindow
