@@ -10,12 +10,14 @@ use smithay::{
 pub struct App<E, S, U, R> where
     E: Engine<'static, U, R, S>,
     S: Widget<'static, U, R> + 'static,
+    U: 'static,
+    R: 'static
 {
     _update: PhantomData<U>,
     _render: PhantomData<R>,
     logger:  Logger,
-    display: Display<(E, S)>,
-    events:  EventLoop<'static, (E, S)>,
+    display: Display<Shared<Self>>,
+    events:  EventLoop<'static, Shared<Self>>,
     engine:  E,
     state:   S,
 }
@@ -26,8 +28,12 @@ impl<E, S, U, R> App<E, S, U, R> where
 {
 
     pub fn new () -> StdResult<Self> {
-        // Create the environment
-        let (logger, events, display) = Self::init()?;
+        // Create the logger
+        let (logger, _guard) = init_log();
+        // Create the event loop
+        let events = EventLoop::<'static, (E, S)>::try_new()?;
+        // Create the display
+        let display = Display::<(E, S)>::new()?;
         // Create the engine
         let engine = E::new(&logger, &display.handle())?;
         // Create the state
@@ -43,44 +49,14 @@ impl<E, S, U, R> App<E, S, U, R> where
         })
     }
 
-    fn init () -> StdResult<(Logger, EventLoop<'static, (E, S)>, Display<(E, S)>)> {
-        // Create the logger
-        let (logger, _guard) = init_log();
-        // Create the event loop
-        let events = EventLoop::<'static, (E, S)>::try_new()?;
-        // Create the display
-        let display = Display::<(E, S)>::new()?;
-        Ok((logger, events, display))
+    /// Perform a procedure with this app instance as part of a method call chain.
+    pub fn with (&mut self, cb: impl Fn(&mut Self)->StdResult<&mut Self>) -> StdResult<&mut Self> {
+        cb(self)
     }
 
     /// Run an instance of an application.
-    pub fn run (&mut self) -> StdResult<()> {
-        // Listen on socket and expose it as env var
-        let socket_name = self.listen()?;
-        std::env::set_var("WAYLAND_DISPLAY", &socket_name);
-        // Run main loop
-        loop {
-            // Respond to user input
-            if let Err(e) = self.engine.update(self.state) {
-                crit!(self.logger, "Update error: {e}");
-                break
-            }
-            // Render display
-            if let Err(e) = self.engine.render(&mut self.state) {
-                crit!(self.logger, "Render error: {e}");
-                break
-            }
-            // Flush display/client messages
-            self.display.flush_clients()?;
-            // Dispatch state to next event loop tick
-            self.events.dispatch(
-                Some(Duration::from_millis(1)),
-                &mut (self.engine, self.state)
-            );
-        }
-    }
-
-    fn listen (&self) -> StdResult<std::ffi::OsString> {
+    pub fn run (self: Self) -> StdResult<()> {
+        let logger = self.logger.clone();
         // Listen for events
         let fd = self.display.backend().poll_fd().as_raw_fd();
         self.events.handle().insert_source(
@@ -91,9 +67,9 @@ impl<E, S, U, R> App<E, S, U, R> where
             }
         );
         // Create a socket
-        let socket = ListeningSocketSource::new_auto(self.logger.clone()).unwrap();
+        let socket = ListeningSocketSource::new_auto(logger.clone()).unwrap();
         // Listen for new clients
-        let socket_logger  = self.logger.clone();
+        let socket_logger  = logger.clone();
         let socket_display = self.display.handle();
         self.events.handle().insert_source(socket, move |client, _, _| {
             debug!(socket_logger, "New client {client:?}");
@@ -102,7 +78,27 @@ impl<E, S, U, R> App<E, S, U, R> where
                 Arc::new(ClientState)
             ).expect("Could not insert client in engine display");
         });
-        Ok(socket.socket_name().to_os_string())
+        let socket_name = socket.socket_name().to_os_string();
+        std::env::set_var("WAYLAND_DISPLAY", &socket_name);
+        // Put the whole struct in a smart pointer
+        let app = Rc::new(RefCell::new(self));
+        // Run main loop
+        loop {
+            // Respond to user input
+            if let Err(e) = app.engine.update(app.state) {
+                crit!(logger, "Update error: {e}");
+                break
+            }
+            // Render display
+            if let Err(e) = app.engine.render(&mut app.state) {
+                crit!(logger, "Render error: {e}");
+                break
+            }
+            // Flush display/client messages
+            app.display.flush_clients()?;
+            // Dispatch state to next event loop tick
+            app.events.dispatch(Some(Duration::from_millis(1)), app.clone());
+        }
     }
 
 }
@@ -110,9 +106,7 @@ impl<E, S, U, R> App<E, S, U, R> where
 struct ClientState;
 
 impl ClientData for ClientState {
-    fn initialized (&self, _client_id: ClientId) {
-    }
-    fn disconnected (&self, _client_id: ClientId, _reason: DisconnectReason) {
-    }
+    fn initialized (&self, _client_id: ClientId) {}
+    fn disconnected (&self, _client_id: ClientId, _reason: DisconnectReason) {}
 }
 

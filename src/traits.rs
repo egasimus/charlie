@@ -2,6 +2,8 @@ use crate::prelude::*;
 
 pub type StdResult<T> = Result<T, Box<dyn Error>>;
 
+pub type Shared<T> = Rc<RefCell<T>>;
+
 /// Something that respond to user input.
 pub trait Update<UpdateParams> {
     /// Respond to input
