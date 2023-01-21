@@ -64,15 +64,15 @@ impl Widget for AppState {
             startup: vec![],
         })
     }
-}
-
-/// Render the compositor on a given output
-impl<'a> Render<'a, (&'a mut Gles2Renderer, &'a Output, Size<i32, Physical>, ScreenId)> for AppState {
 
     /// Render the desktop and pointer for this output
-    fn render (&'a mut self, params: &'a mut (&'a mut Gles2Renderer, &'a Output, Size<i32, Physical>, ScreenId))
-        -> StdResult<()>
-    {
+    fn render (
+        &mut self,
+        renderer: &mut Gles2Renderer,
+        output: &Output,
+        size: &Size<i32, Physical>,
+        screen: ScreenId
+    ) -> StdResult<()> {
         let (renderer, output, screen_size, screen_id) = params;
         let AppState { desktop, input, .. } = &self;
         let (size, transform, scale) = (
@@ -106,5 +106,4 @@ impl<'a> Render<'a, (&'a mut Gles2Renderer, &'a Output, Size<i32, Physical>, Scr
 
         Ok(())
     }
-
 }

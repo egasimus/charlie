@@ -18,11 +18,21 @@ pub trait Render<'r, RenderParams> {
 
 /// Marker trait for Render + Update
 pub trait Widget {
+
     fn new <T> (
         logger:  &Logger,
         display: &DisplayHandle,
         events:  &LoopHandle<'static, T>
     ) -> StdResult<Self> where Self: Sized;
+
+    fn render (
+        &mut self,
+        renderer: &mut Gles2Renderer,
+        output:   &Output,
+        size:     &Size<i32, Physical>,
+        screen:   ScreenId
+    ) -> StdResult<()>;
+
 }
 
 ///// All types that implement Render + Update are widgets
@@ -38,8 +48,10 @@ pub trait Engine: Outputs + Inputs + 'static {
     /// Obtain a mutable reference to the renderer.
     fn renderer (&mut self)
         -> &mut Gles2Renderer;
-    fn update <W> (&mut self, context: W) -> StdResult<()>;
-    fn render <W> (&mut self, context: &mut W) -> StdResult<()>;
+    fn update <W> (&mut self, context: W)
+        -> StdResult<()>;
+    fn render <W: Widget> (&mut self, context: &mut W)
+        -> StdResult<()>;
 }
 
 ///// All static instances of types that implement Render + Update + Outputs + Inputs are engines

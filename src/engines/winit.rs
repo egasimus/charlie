@@ -14,7 +14,7 @@ use smithay::{
             context::GlAttributes,
             display::EGLDisplay
         },
-        renderer::{ImportDma, ImportEgl},
+        renderer::{Bind, ImportDma, ImportEgl},
         winit::{Error as WinitError, WindowSize}
     },
     wayland::{
@@ -91,27 +91,23 @@ impl Engine for WinitEngine {
         logger:  &Logger,
         display: &DisplayHandle,
     ) -> Result<Self, Box<dyn Error>> {
-
         debug!(logger, "Starting Winit engine");
-
+        // Create the Winit event loop
         let events = WinitEventLoop::new();
-
-        // Null window to host the EGLDisplay
+        // Create a null window to host the EGLDisplay
         let window = Arc::new(WindowBuilder::new()
             .with_inner_size(LogicalSize::new(16, 16))
             .with_title("Charlie Null")
             .with_visible(false)
             .build(&events)
             .map_err(WinitError::InitFailed)?);
-
+        // Create the renderer and EGL context
         let egl_display = EGLDisplay::new(window, logger.clone()).unwrap();
-
         let egl_context = EGLContext::new_with_config(&egl_display, GlAttributes {
             version: (3, 0), profile: None, vsync: true, debug: cfg!(debug_assertions),
         }, Default::default(), logger.clone())?;
-
         let mut renderer = make_renderer(logger, &egl_context)?;
-
+        // Init dmabuf support
         let dmabuf_state = if renderer.bind_wl_display(&display).is_ok() {
             info!(logger, "EGL hardware-acceleration enabled");
             let mut state = DmabufState::new();
@@ -124,7 +120,6 @@ impl Engine for WinitEngine {
         } else {
             None
         };
-
         Ok(Self {
             logger:       logger.clone(),
             shm:          ShmState::new::<App<Self, W>, _>(&display, vec![], logger.clone()),
@@ -149,15 +144,58 @@ impl Engine for WinitEngine {
     }
 
     /// Render to each host window
-    fn render <W> (&mut self, state: &mut W) -> StdResult<()> {
+    fn render <W: Widget> (&mut self, state: &mut W) -> StdResult<()> {
         for (_, output) in self.outputs.iter() {
-            output.render((self, state))?;
+            if let Some(size) = output.resized.take() {
+                output.surface.resize(size.w, size.h, 0, 0);
+            }
+            self.renderer.bind(output.surface.clone())?;
+            let size = output.surface.get_size().unwrap();
+            state.render(&mut self.renderer, &output.output, &size, output.screen)?;
+            output.surface.swap_buffers(None)?;
         }
         Ok(())
     }
 
     fn update <W> (&mut self, state: W) -> StdResult<()> {
-        Ok(())
+        let mut closed = false;
+        if self.started.is_none() {
+            let event = InputEvent::DeviceAdded { device: WinitVirtualDevice };
+            callback(0, WinitEvent::Input(event));
+            self.started = Some(Instant::now());
+        }
+        let started = &self.started.unwrap();
+        let logger  = &self.logger;
+        let outputs = &mut self.outputs;
+        self.events.run_return(move |event, _target, control_flow| {
+            //debug!(self.logger, "{target:?}");
+            match event {
+                Event::RedrawEventsCleared => {
+                    *control_flow = ControlFlow::Exit;
+                }
+                Event::RedrawRequested(_id) => {
+                    callback(0, WinitEvent::Refresh);
+                }
+                Event::WindowEvent { window_id, event } => match outputs.get_mut(&window_id) {
+                    Some(window) => {
+                        window.update((started, event, &mut callback));
+                        if window.is_closing() {
+                            outputs.remove(&window_id);
+                            closed = true;
+                        }
+                    },
+                    None => {
+                        warn!(logger, "Received event for unknown window id {window_id:?}")
+                    }
+                }
+                _ => {}
+            }
+        });
+        if closed {
+            Err(WinitHostError::WindowClosed.into())
+        } else {
+            Ok(())
+        }
     }
 
 }
@@ -226,8 +264,6 @@ fn make_context (logger: &Logger, egl: &EGLContext) -> Result<EGLContext, Box<dy
     }, Default::default(), logger.clone())?)
 }
 
-pub type ScreenId = usize;
-
 pub type WinitRenderContext<'a> = &'a mut (
     &'a mut Gles2Renderer,
     &'a Output,
@@ -239,46 +275,3 @@ pub type WinitUpdateContext = (
     InputEvent<WinitInput>,
     ScreenId
 );
-
-impl Update<WinitUpdateContext> for WinitEngine {
-    fn update (&mut self, mut callback: WinitUpdateContext) -> StdResult<()> {
-        let mut closed = false;
-        if self.started.is_none() {
-            let event = InputEvent::DeviceAdded { device: WinitVirtualDevice };
-            callback(0, WinitEvent::Input(event));
-            self.started = Some(Instant::now());
-        }
-        let started = &self.started.unwrap();
-        let logger  = &self.logger;
-        let outputs = &mut self.outputs;
-        self.events.run_return(move |event, _target, control_flow| {
-            //debug!(self.logger, "{target:?}");
-            match event {
-                Event::RedrawEventsCleared => {
-                    *control_flow = ControlFlow::Exit;
-                }
-                Event::RedrawRequested(_id) => {
-                    callback(0, WinitEvent::Refresh);
-                }
-                Event::WindowEvent { window_id, event } => match outputs.get_mut(&window_id) {
-                    Some(window) => {
-                        window.update((started, event, &mut callback));
-                        if window.is_closing() {
-                            outputs.remove(&window_id);
-                            closed = true;
-                        }
-                    },
-                    None => {
-                        warn!(logger, "Received event for unknown window id {window_id:?}")
-                    }
-                }
-                _ => {}
-            }
-        });
-        if closed {
-            Err(WinitHostError::WindowClosed.into())
-        } else {
-            Ok(())
-        }
-    }
-}

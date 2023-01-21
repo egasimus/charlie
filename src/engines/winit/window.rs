@@ -12,14 +12,16 @@ pub struct WinitHostWindow {
     window:   WinitWindow,
     closing:  bool,
     rollover: u32,
-    surface:  Rc<EGLSurface>,
-    resized:  Rc<Cell<Option<Size<i32, Physical>>>>,
     size:     Rc<RefCell<WindowSize>>,
     is_x11:   bool,
     /// Which viewport is rendered to this window
-    screen:   ScreenId,
+    pub screen: ScreenId,
     /// The wayland output
-    output:   Output,
+    pub output:   Output,
+    /// The drawing surface
+    pub surface:  Rc<EGLSurface>,
+    /// Whether a new size has been specified, to apply on next render
+    pub resized:  Rc<Cell<Option<Size<i32, Physical>>>>,
 }
 
 /// Build a host window
@@ -151,25 +153,14 @@ impl<'a> WinitHostWindow {
         ).map_err(EGLError::CreationFailed)?)
     }
 
-}
-
-/// Render a compositor output into this host window
-impl<'r, W> Render<'r, (&'r mut WinitEngine, W)> for WinitHostWindow {
-
     /// Render the app state on this output
-    fn render (&'r mut self, params: &'r mut (&'r mut WinitEngine, W)) -> StdResult<()> {
+    pub fn render <'r, W: Widget> (&'r mut self, params: &'r mut (&'r mut WinitEngine, W)) -> StdResult<()> {
         let (engine, state) = params;
-        if let Some(size) = self.resized.take() {
-            self.surface.resize(size.w, size.h, 0, 0);
-        }
-        engine.renderer.bind(self.surface.clone())?;
-        let size = self.surface.get_size().unwrap();
-        state.render((&mut engine.renderer, &self.output, size, self.screen))?;
-        self.surface.swap_buffers(None)?;
         Ok(())
     }
 
 }
+
 
 impl<'a, T> Update<(&'a Instant, WindowEvent<'a>, &'a mut T)> for WinitHostWindow
 where
