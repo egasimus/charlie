@@ -47,7 +47,7 @@ impl AppState {
 }
 
 impl Widget for AppState {
-    fn new <T> (
+    fn new <T: 'static> (
         logger:  &Logger,
         display: &DisplayHandle,
         events:  &LoopHandle<'static, T>

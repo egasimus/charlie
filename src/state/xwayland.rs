@@ -14,33 +14,35 @@ atom_manager! {
 
 pub type Unpaired = HashMap<u32, (X11Window, Point<i32, Logical>)>;
 
-pub fn init_xwayland <T> (
+pub fn init_xwayland <T: 'static> (
     logger:  &Logger,
     events:  &LoopHandle<'static, T>,
     display: &DisplayHandle,
     ready:   Box<dyn Fn(&mut T)->Result<(), Box<dyn Error>>>
 ) -> Result<(), Box<dyn Error>> {
     let (xwayland, channel) = XWayland::new(logger.clone(), &display);
-    let cb_logger  = logger.clone();
-    let cb_events  = events.clone();
-    let cb_display = display.clone();
+    let cb_logger   = logger.clone();
+    let cb_events   = events.clone();
+    let cb_display  = display.clone();
     events.insert_source(channel, move |event, _, app| match event {
         XWaylandEvent::Ready { connection, client, .. } => {
-            let (x11conn, x11atoms, x11source) = x11_connect(&cb_logger, &cb_display.clone(), connection)
-                .unwrap();
+            let (x11conn, x11atoms, x11source) =
+                x11_connect(&cb_logger, &cb_display.clone(), connection).unwrap();
             let mut unpaired: Unpaired = Default::default();
+            let x11_logger  = cb_logger.clone();
+            let x11_display = cb_display.clone();
             cb_events.clone().insert_source(x11source, move |event, _, state| {
-                debug!(cb_logger, "X11: Got event {:?}", event);
+                debug!(x11_logger, "X11: Got event {:?}", event);
                 x11_handle(
-                    &cb_logger,
-                    &cb_display.clone(),
+                    &x11_logger,
+                    &x11_display,
                     &client,
                     &x11conn,
                     x11atoms,
                     event, 
                     &mut unpaired
                 ).unwrap();
-            });
+            }).unwrap();
             debug!(cb_logger, "DISPLAY={:?}", ::std::env::var("DISPLAY"));
             ready(app).unwrap()
         },
@@ -52,7 +54,7 @@ pub fn init_xwayland <T> (
     Ok(())
 }
 
-pub fn x11_handle (
+fn x11_handle (
     logger:   &Logger,
     display:  &DisplayHandle,
     client:   &Client,
@@ -72,8 +74,7 @@ pub fn x11_handle (
     Ok(())
 }
 
-
-pub fn x11_connect (
+fn x11_connect (
     logger:     &Logger,
     display:    &DisplayHandle,
     connection: UnixStream,
@@ -139,7 +140,7 @@ pub fn x11_configure (
     Ok(())
 }
 
-pub fn x11_client_message (
+fn x11_client_message (
     logger:   &Logger,
     display:  &DisplayHandle,
     client:   &Client,
