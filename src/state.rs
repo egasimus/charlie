@@ -69,12 +69,12 @@ impl Widget for AppState {
     fn render (
         &mut self,
         renderer: &mut Gles2Renderer,
-        output: &Output,
-        size: &Size<i32, Physical>,
-        screen: ScreenId
+        output:   &Output,
+        size:     &Size<i32, Physical>,
+        screen:   ScreenId
     ) -> StdResult<()> {
-        let (renderer, output, screen_size, screen_id) = params;
-        let AppState { desktop, input, .. } = &self;
+
+        // Get the render parameters
         let (size, transform, scale) = (
             output.current_mode().unwrap().size,
             output.current_transform(),
@@ -82,7 +82,7 @@ impl Widget for AppState {
         );
 
         // Import window surfaces
-        desktop.import(renderer)?;
+        self.desktop.import(renderer)?;
 
         // Begin frame
         let mut frame = renderer.render(size, Transform::Flipped180)?;
@@ -91,19 +91,20 @@ impl Widget for AppState {
         frame.clear([0.2, 0.3, 0.4, 1.0], &[Rectangle::from_loc_and_size((0, 0), size)])?;
 
         // Render window surfaces
-        desktop.render(&mut frame, *screen_id, size)?;
+        self.desktop.render(&mut frame, screen, size)?;
 
         // Render pointers
-        for pointer in input.pointers.iter() {
-            pointer.render(&mut (&mut frame, size, &desktop.screens[*screen_id]))?;
+        for pointer in self.input.pointers.iter_mut() {
+            pointer.render(&mut frame, &size, &self.desktop.screens[screen])?;
         }
 
         // End frame
         frame.finish()?;
 
         // Advance time
-        desktop.send_frames(output);
+        self.desktop.send_frames(output);
 
         Ok(())
+
     }
 }

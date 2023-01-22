@@ -9,8 +9,8 @@ use smithay::{
 /// to a root Widget representing the application state.
 pub struct App<E: Engine, W: Widget + 'static> where {
     logger:  Logger,
-    display: Display<Self>,
-    events:  EventLoop<'static, Self>,
+    display: Rc<RefCell<Display<Self>>>,
+    events:  Rc<RefCell<EventLoop<'static, Self>>>,
     pub engine: E,
     pub state:  W,
 }
@@ -30,49 +30,52 @@ impl<E: Engine, W: Widget + 'static> App<E, W> {
         let state = W::new(&logger, &display.handle(), &events.handle())?;
         Ok(Self {
             logger,
-            display,
-            events,
             engine,
             state,
+            display: Rc::new(RefCell::new(display)),
+            events:  Rc::new(RefCell::new(events)),
         })
     }
 
     /// Perform a procedure with this app instance as part of a method call chain.
-    pub fn with (&mut self, cb: impl Fn(&mut Self)->StdResult<&mut Self>) -> StdResult<&mut Self> {
+    pub fn with (self, cb: impl Fn(Self)->StdResult<Self>) -> StdResult<Self> {
         cb(self)
     }
 
     /// Run an instance of an application.
-    pub fn run (self: Self) -> StdResult<()> {
+    pub fn run (mut self) -> StdResult<()> {
         let logger = self.logger.clone();
         // Listen for events
-        let fd = self.display.backend().poll_fd().as_raw_fd();
-        self.events.handle().insert_source(
+        let display = self.display.clone();
+        let fd = display.borrow_mut().backend().poll_fd().as_raw_fd();
+        self.events.borrow().handle().insert_source(
             Generic::new(fd, Interest::READ, Mode::Level),
-            move |_, _, mut state| {
-                self.display.dispatch_clients(state)?;
+            move |_, _, state| {
+                display.borrow_mut().dispatch_clients(state)?;
                 Ok(PostAction::Continue)
             }
         );
         // Create a socket
         let socket = ListeningSocketSource::new_auto(logger.clone()).unwrap();
+        let socket_name = socket.socket_name().to_os_string();
         // Listen for new clients
         let socket_logger  = logger.clone();
-        let socket_display = self.display.handle();
-        self.events.handle().insert_source(socket, move |client, _, _| {
+        let mut socket_display = self.display.borrow().handle();
+        self.events.borrow().handle().insert_source(socket, move |client, _, _| {
             debug!(socket_logger, "New client {client:?}");
             socket_display.insert_client(
                 client.try_clone().expect("Could not clone socket for engine dispatcher"),
                 Arc::new(ClientState)
             ).expect("Could not insert client in engine display");
         });
-        let socket_name = socket.socket_name().to_os_string();
         std::env::set_var("WAYLAND_DISPLAY", &socket_name);
         // Put the whole struct in a smart pointer
         // Run main loop
+        let display = self.display.clone();
+        let events  = self.events.clone();
         loop {
             // Respond to user input
-            if let Err(e) = self.engine.update(self.state) {
+            if let Err(e) = self.engine.update(&mut self.state) {
                 crit!(logger, "Update error: {e}");
                 break
             }
@@ -82,9 +85,9 @@ impl<E: Engine, W: Widget + 'static> App<E, W> {
                 break
             }
             // Flush display/client messages
-            self.display.flush_clients()?;
+            display.borrow_mut().flush_clients()?;
             // Dispatch state to next event loop tick
-            self.events.dispatch(Some(Duration::from_millis(1)), &mut self);
+            events.borrow_mut().dispatch(Some(Duration::from_millis(1)), &mut self);
         }
         Ok(())
     }

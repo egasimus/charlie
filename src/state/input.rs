@@ -252,6 +252,32 @@ impl Pointer {
         })
     }
 
+    /// Render this pointer
+    pub fn render <'a> (
+        &mut self,
+        frame:  &mut Gles2Frame<'a>,
+        size:   &Size<i32, Physical>,
+        screen: &ScreenState
+    ) -> StdResult<()> {
+        let damage = Rectangle::<i32, Physical>::from_loc_and_size(
+            Point::<i32, Physical>::from((0i32, 0i32)),
+            *size
+        );
+        let x = self.location.x;
+        let y = self.location.y;
+        let location = Point::<f64, Logical>::from((x, y)).to_physical(1.0).to_i32_round();
+        //let size = self.texture.size();
+        Ok(frame.render_texture_at(
+            &self.texture,
+            location,
+            1,
+            1.0,
+            Transform::Normal,
+            &[damage],
+            1.0
+        )?)
+    }
+
     fn status (&self) -> (bool, Point<f64, Logical>) {
         let mut reset = false;
         let mut guard = self.status.lock().unwrap();
@@ -401,35 +427,6 @@ impl Pointer {
         //}
 
         //self.pointer.axis(frame);
-    }
-
-}
-
-/// Render this pointer
-impl<'a> Render<'a, (&'a mut Gles2Frame<'a>, Size<i32, Physical>, &'a ScreenState)> for Pointer {
-
-    /// Render this pointer
-    fn render (&'a mut self, params: &'a mut (&'a mut Gles2Frame<'a>, Size<i32, Physical>, &'a ScreenState))
-        -> StdResult<()>
-    {
-        let (frame, size, screen) = params;
-        let damage = Rectangle::<i32, Physical>::from_loc_and_size(
-            Point::<i32, Physical>::from((0i32, 0i32)),
-            *size
-        );
-        let x = self.location.x;
-        let y = self.location.y;
-        let location = Point::<f64, Logical>::from((x, y)).to_physical(1.0).to_i32_round();
-        //let size = self.texture.size();
-        Ok(frame.render_texture_at(
-            &self.texture,
-            location,
-            1,
-            1.0,
-            Transform::Normal,
-            &[damage],
-            1.0
-        )?)
     }
 
 }
