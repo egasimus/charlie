@@ -7,7 +7,15 @@ use smithay::{
 
 /// Binds an Engine representing the runtime environment
 /// to a root Widget representing the application state.
-pub struct App<E: Engine, W: Widget + 'static> where {
+pub struct App<E, W>
+where
+    E: Engine,
+    W: Widget + 'static,
+    App<E, W>: GlobalDispatch<WlCompositor,    ()> +
+               GlobalDispatch<WlSubcompositor, ()> +
+               GlobalDispatch<XdgWmBase,       ()> +
+               'static
+{
     logger:  Logger,
     display: Rc<RefCell<Display<Self>>>,
     events:  Rc<RefCell<EventLoop<'static, Self>>>,
@@ -15,7 +23,15 @@ pub struct App<E: Engine, W: Widget + 'static> where {
     pub state:  W,
 }
 
-impl<E: Engine, W: Widget + 'static> App<E, W> {
+impl<E, W> App<E, W>
+where
+    E: Engine,
+    W: Widget + 'static,
+    App<E, W>: GlobalDispatch<WlCompositor,    ()> +
+               GlobalDispatch<WlSubcompositor, ()> +
+               GlobalDispatch<XdgWmBase,       ()> +
+               'static
+{
 
     pub fn new () -> StdResult<Self> {
         // Create the logger

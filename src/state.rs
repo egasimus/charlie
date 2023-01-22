@@ -47,11 +47,15 @@ impl AppState {
 }
 
 impl Widget for AppState {
-    fn new <T: 'static> (
-        logger:  &Logger,
-        display: &DisplayHandle,
-        events:  &LoopHandle<'static, T>
-    ) -> Result<Self, Box<dyn Error>> {
+
+    fn new <T> (logger: &Logger, display: &DisplayHandle, events:  &LoopHandle<'static, T>)
+        -> Result<Self, Box<dyn Error>>
+    where
+        T: GlobalDispatch<WlCompositor,    ()> +
+           GlobalDispatch<WlSubcompositor, ()> +
+           GlobalDispatch<XdgWmBase,       ()> +
+           'static
+    {
         // Init xwayland
         crate::state::xwayland::init_xwayland(
             logger, events, display,
@@ -59,7 +63,7 @@ impl Widget for AppState {
         )?;
         Ok(Self {
             logger:  logger.clone(),
-            desktop: Desktop::new(logger, display)?,
+            desktop: Desktop::new::<T>(logger, display)?,
             input:   Input::new(logger, display)?,
             startup: vec![],
         })

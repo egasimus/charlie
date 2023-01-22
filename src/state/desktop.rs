@@ -13,14 +13,19 @@ pub struct Desktop {
 
 impl Desktop {
 
-    pub fn new (logger: &Logger, handle: &DisplayHandle) -> Result<Self, Box<dyn Error>> {
+    pub fn new <T> (logger: &Logger, handle: &DisplayHandle) -> Result<Self, Box<dyn Error>>
+    where
+        T: GlobalDispatch<WlCompositor,    ()> +
+           GlobalDispatch<WlSubcompositor, ()> +
+           GlobalDispatch<XdgWmBase,       ()>
+    {
         Ok(Self {
-            logger: logger.clone(),
-            clock:  Clock::new()?,
-            compositor: CompositorState::new::<Self, _>(&handle, logger.clone()),
-            xdg_shell:  XdgShellState::new::<Self, _>(&handle, logger.clone()),
-            windows: vec![],
-            screens: vec![],
+            logger:     logger.clone(),
+            clock:      Clock::new()?,
+            compositor: CompositorState::new::<T, _>(&handle, logger.clone()),
+            xdg_shell:  XdgShellState::new::<T, _>(&handle, logger.clone()),
+            windows:    vec![],
+            screens:    vec![],
         })
     }
 

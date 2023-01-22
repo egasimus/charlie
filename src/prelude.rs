@@ -99,3 +99,12 @@ pub fn import_bitmap (renderer: &mut Gles2Renderer, path: impl AsRef<Path>)
 }
 
 pub type ScreenId = usize;
+
+pub(crate) use smithay::reexports::{
+    wayland_server::{
+        GlobalDispatch,
+        protocol::wl_compositor::WlCompositor,
+        protocol::wl_subcompositor::WlSubcompositor
+    },
+    wayland_protocols::xdg::shell::server::xdg_wm_base::XdgWmBase
+};
