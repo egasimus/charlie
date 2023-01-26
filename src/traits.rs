@@ -39,7 +39,7 @@ pub trait Widget {
 
 pub trait Engine: Outputs + Inputs + 'static {
     /// Create a new instance of this engine
-    fn new <W: Widget + 'static> (logger: &Logger, display: &DisplayHandle)
+    fn new (logger: &Logger, display: &DisplayHandle)
         -> Result<Self, Box<dyn Error>> where Self: Sized;
     /// Obtain a copy of the logger.
     fn logger (&self)
@@ -47,10 +47,23 @@ pub trait Engine: Outputs + Inputs + 'static {
     /// Obtain a mutable reference to the renderer.
     fn renderer (&mut self)
         -> &mut Gles2Renderer;
-    fn update <W: Widget + 'static> (&mut self, context: &mut W)
+    fn update <U: RootUpdate + 'static> (&mut self, context: &mut U)
         -> StdResult<()>;
-    fn render <W: Widget + 'static> (&mut self, context: &mut W)
+    fn render <R: RootRender + 'static> (&mut self, context: &mut R)
         -> StdResult<()>;
+}
+
+pub trait RootUpdate {
+}
+
+pub trait RootRender {
+    fn render (
+        &mut self,
+        renderer: &mut Gles2Renderer,
+        output:   &Output,
+        size:     &Size<i32, Physical>,
+        screen:   ScreenId
+    ) -> StdResult<()>;
 }
 
 ///// All static instances of types that implement Render + Update + Outputs + Inputs are engines

@@ -79,7 +79,7 @@ impl Desktop {
 impl<E: Engine> CompositorHandler for App<E> {
 
     fn compositor_state (&mut self) -> &mut CompositorState {
-        &mut self.state.desktop.compositor
+        &mut self.desktop.compositor
     }
 
     /// Commit each surface, binding a state data buffer to it.
@@ -121,7 +121,7 @@ impl<E: Engine> CompositorHandler for App<E> {
 
         }
 
-        if let Some(window) = self.state.desktop.window_find(&surface) {
+        if let Some(window) = self.desktop.window_find(&surface) {
             window.on_commit();
         } else {
             warn!(self.logger, "could not find window for root toplevel surface {surface:?}");
@@ -134,13 +134,13 @@ impl<E: Engine> CompositorHandler for App<E> {
 impl<E: Engine> XdgShellHandler for App<E> {
 
     fn xdg_shell_state (&mut self) -> &mut XdgShellState {
-        &mut self.state.desktop.xdg_shell
+        &mut self.desktop.xdg_shell
     }
 
     fn new_toplevel (&mut self, surface: ToplevelSurface) {
         debug!(self.logger, "New toplevel surface: {surface:?}");
         surface.send_configure();
-        self.state.desktop.window_add(Window::new(Kind::Xdg(surface)));
+        self.desktop.window_add(Window::new(Kind::Xdg(surface)));
     }
 
     fn new_popup (&mut self, surface: PopupSurface, positioner: PositionerState) {

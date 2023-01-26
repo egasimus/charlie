@@ -129,7 +129,7 @@ impl Engine for WinitEngine {
     }
 
     /// Render to each host window
-    fn render <W: Widget + 'static> (&mut self, state: &mut W) -> StdResult<()> {
+    fn render <R: RootRender + 'static> (&mut self, state: &mut R) -> StdResult<()> {
         for (_, output) in self.outputs.iter() {
             if let Some(size) = output.resized.take() {
                 output.surface.resize(size.w, size.h, 0, 0);
@@ -143,7 +143,7 @@ impl Engine for WinitEngine {
     }
 
     /// Dispatch input events from the host window to the hosted root widget.
-    fn update <W: Widget + 'static> (&mut self, state: &mut W) -> StdResult<()> {
+    fn update <U: RootUpdate + 'static> (&mut self, state: &mut U) -> StdResult<()> {
         let mut closed = false;
         if self.started.is_none() {
             //let event = InputEvent::DeviceAdded { device: WinitVirtualDevice };

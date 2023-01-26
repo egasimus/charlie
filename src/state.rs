@@ -23,7 +23,7 @@ pub struct App<E: Engine> {
     /// The collection of windows and their layouts
     pub desktop: Desktop,
     /// The collection of input devices
-    pub input:   Input,
+    pub input:   Input<E>,
     /// Engine-specific state
     pub engine:  E,
 }
@@ -44,14 +44,26 @@ impl<E: Engine> App<E> {
         // Create the engine
         let engine = E::new(&logger, &display.handle())?;
 
+        // Init xwayland
+        crate::state::xwayland::init_xwayland(
+            &logger,
+            &events.handle(),
+            &display.handle(),
+            Box::new(|x|Ok(()))//x.1.ready())
+        )?;
+
+        let desktop = Desktop::new::<E>(&logger, &display.handle())?;
+
+        let input = Input::new(&logger, &display.handle())?;
+
         Ok(Self {
             logger,
             engine,
             display: Rc::new(RefCell::new(display)),
             events:  Rc::new(RefCell::new(events)),
             startup: vec![],
-            desktop: Desktop::new::<Self>(logger, display)?,
-            input:   Input::new(logger, display)?,
+            desktop,
+            input,
         })
     }
 
@@ -144,27 +156,7 @@ impl<E: Engine> App<E> {
 
 }
 
-impl Widget for AppState {
-
-    fn new <E: Engine> (
-        logger:  &Logger,
-        display: &DisplayHandle,
-        events:  &LoopHandle<'static, App<E>>
-    )
-        -> Result<Self, Box<dyn Error>>
-    {
-        // Init xwayland
-        crate::state::xwayland::init_xwayland(
-            logger, events, display,
-            Box::new(|x|Ok(()))//x.1.ready())
-        )?;
-        Ok(Self {
-            logger:  logger.clone(),
-            desktop: Desktop::new::<E>(logger, display)?,
-            input:   Input::new(logger, display)?,
-            startup: vec![],
-        })
-    }
+impl<E: Engine> RootRender for App<E> {
 
     /// Render the desktop and pointer for this output
     fn render (
@@ -208,6 +200,9 @@ impl Widget for AppState {
         Ok(())
 
     }
+}
+
+impl<E: Engine> RootUpdate for App<E> {
 }
 
 struct ClientState;
