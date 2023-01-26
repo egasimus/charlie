@@ -1,26 +1,20 @@
 pub(crate) use crate::prelude::*;
 
-pub(crate) use super::desktop::Desktop;
-
 pub(crate) type ScreenId = usize;
 
 pub(crate) use smithay::{
-    delegate_compositor,
-    delegate_data_device,
-    delegate_seat,
-    delegate_xdg_shell,
     backend::{
         renderer::{
             buffer_dimensions,
             ImportAll,
             utils::{
-                on_commit_buffer_handler,
-                RendererSurfaceState,
+                //on_commit_buffer_handler,
+                //RendererSurfaceState,
                 RendererSurfaceStateUserData,
             }
         },
         input::{
-            Event,
+            //Event,
             AbsolutePositionEvent,
             ButtonState
         }
@@ -30,27 +24,27 @@ pub(crate) use smithay::{
         SeatState,
         keyboard::XkbConfig,
         pointer::{
-            AxisFrame,
-            ButtonEvent,
-            Focus,
-            GrabStartData as PointerGrabStartData,
+            //AxisFrame,
+            //ButtonEvent,
+            //Focus,
+            //GrabStartData as PointerGrabStartData,
             MotionEvent,
-            PointerGrab,
-            PointerInnerHandle,
+            //PointerGrab,
+            //PointerInnerHandle,
         },
     },
     reexports::{
         wayland_protocols::xdg::shell::server::xdg_toplevel::{
-            State      as XdgToplevelState,
+            //State      as XdgToplevelState,
             ResizeEdge as XdgToplevelResizeEdge
         },
         wayland_server::{
             Client,
             DisplayHandle,
-            Resource,
+            //Resource,
             protocol::{
                 wl_seat::WlSeat,
-                wl_buffer,
+                //wl_buffer,
                 wl_surface::WlSurface
             }
         },
@@ -79,16 +73,16 @@ pub(crate) use smithay::{
     },
     wayland::{
         compositor::{
-            self,
+            //self,
             CompositorHandler,
             CompositorState,
             get_parent,
             give_role,
-            is_sync_subsurface,
+            //is_sync_subsurface,
             add_destruction_hook,
             with_states,
         },
-        input_method::InputMethodSeat,
+        //input_method::InputMethodSeat,
         data_device::{
             DataDeviceState,
             ClientDndGrabHandler,

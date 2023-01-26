@@ -1,7 +1,6 @@
 use crate::prelude::*;
 
 use smithay::{
-    delegate_dmabuf,
     output::{PhysicalProperties, Subpixel, Mode},
     backend::{
         allocator::dmabuf::Dmabuf,
@@ -12,27 +11,10 @@ use smithay::{
             display::EGLDisplay
         },
         renderer::{Bind, ImportDma, ImportEgl},
-        winit::{Error as WinitError, WindowSize}
-    },
-    wayland::{
-        buffer::BufferHandler,
-        dmabuf::{DmabufGlobal, DmabufState, DmabufHandler, ImportError},
-        output::{OutputManagerState}
-    },
-    reexports::{
-        winit::{
-            dpi::LogicalSize,
-            event_loop::{EventLoop as WinitEventLoop},
-            platform::unix::WindowExtUnix,
-            window::{WindowId, WindowBuilder, Window as WinitWindow},
-        }
-    }
-};
-
-use smithay::{
-    backend::{
         input::InputEvent,
         winit::{
+            Error as WinitError,
+            WindowSize,
             WinitInput,
             WinitEvent,
             WinitVirtualDevice,
@@ -41,23 +23,32 @@ use smithay::{
             WinitTouchStartedEvent, WinitTouchMovedEvent, WinitTouchEndedEvent, WinitTouchCancelledEvent
         }
     },
+    wayland::{
+        buffer::BufferHandler,
+        dmabuf::{DmabufGlobal, DmabufState, DmabufHandler, ImportError},
+        output::{OutputManagerState},
+        shm::{ShmHandler, ShmState}
+    },
     reexports::{
         winit::{
+            dpi::LogicalSize,
             event::{Event, WindowEvent, ElementState, KeyboardInput, Touch, TouchPhase},
-            event_loop::ControlFlow,
+            event_loop::{ControlFlow, EventLoop as WinitEventLoop},
             platform::run_return::EventLoopExtRunReturn,
-        }
+            platform::unix::WindowExtUnix,
+            window::{WindowId, WindowBuilder, Window as WinitWindow},
+        },
+        wayland_server::protocol::wl_buffer::WlBuffer
     }
 };
 
-use smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer;
-use smithay::wayland::shm::{ShmHandler, ShmState};
-
 use wayland_egl as wegl;
 
-delegate_output!(@<X: Widget + 'static> App<WinitEngine, X>);
-delegate_shm!(@<X: Widget + 'static> App<WinitEngine, X>);
-delegate_dmabuf!(@<X: Widget + 'static> App<WinitEngine, X>);
+smithay::delegate_output!(App<WinitEngine>);
+
+smithay::delegate_shm!(App<WinitEngine>);
+
+smithay::delegate_dmabuf!(App<WinitEngine>);
 
 /// Contains the winit and wayland event loops, spawns one or more windows,
 /// and dispatches events to them.
@@ -78,13 +69,13 @@ pub struct WinitEngine {
 impl Engine for WinitEngine {
 
     /// Initialize winit engine
-    fn new <W: Widget + 'static> (
-        logger:  &Logger,
-        display: &DisplayHandle,
-    ) -> Result<Self, Box<dyn Error>> {
+    fn new (logger: &Logger, display: &DisplayHandle) -> Result<Self, Box<dyn Error>> {
+
         debug!(logger, "Starting Winit engine");
+
         // Create the Winit event loop
         let winit_events = WinitEventLoop::new();
+
         // Create a null window to host the EGLDisplay
         let window = Arc::new(WindowBuilder::new()
             .with_inner_size(LogicalSize::new(16, 16))
@@ -92,17 +83,19 @@ impl Engine for WinitEngine {
             .with_visible(false)
             .build(&winit_events)
             .map_err(WinitError::InitFailed)?);
+
         // Create the renderer and EGL context
         let egl_display = EGLDisplay::new(window, logger.clone()).unwrap();
         let egl_context = EGLContext::new_with_config(&egl_display, GlAttributes {
             version: (3, 0), profile: None, vsync: true, debug: cfg!(debug_assertions),
         }, Default::default(), logger.clone())?;
         let mut renderer = make_renderer(logger, &egl_context)?;
+
         // Init dmabuf support
         let dmabuf_state = if renderer.bind_wl_display(&display).is_ok() {
             info!(logger, "EGL hardware-acceleration enabled");
             let mut state = DmabufState::new();
-            let global = state.create_global::<App<Self, W>, _>(
+            let global = state.create_global::<App<Self>, _>(
                 display,
                 renderer.dmabuf_formats().cloned().collect::<Vec<_>>(),
                 logger.clone(),
@@ -111,10 +104,11 @@ impl Engine for WinitEngine {
         } else {
             None
         };
+
         Ok(Self {
             logger:       logger.clone(),
-            shm:          ShmState::new::<App<Self, W>, _>(&display, vec![], logger.clone()),
-            out_manager:  OutputManagerState::new_with_xdg_output::<App<Self, W>>(&display),
+            shm:          ShmState::new::<App<Self>, _>(&display, vec![], logger.clone()),
+            out_manager:  OutputManagerState::new_with_xdg_output::<App<Self>>(&display),
             running:      Arc::new(AtomicBool::new(true)),
             started:      None,
             winit_events: Rc::new(RefCell::new(winit_events)),
@@ -358,17 +352,17 @@ impl Outputs for WinitEngine {
     }
 }
 
-impl<X: Widget + 'static> BufferHandler for App<WinitEngine, X> {
+impl BufferHandler for App<WinitEngine> {
     fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
 }
 
-impl<X: Widget + 'static> ShmHandler for App<WinitEngine, X> {
+impl ShmHandler for App<WinitEngine> {
     fn shm_state(&self) -> &ShmState {
         &self.engine.shm
     }
 }
 
-impl<X: Widget + 'static> DmabufHandler for App<WinitEngine, X> {
+impl DmabufHandler for App<WinitEngine> {
     fn dmabuf_state(&mut self) -> &mut DmabufState {
         &mut self.engine.dmabuf_state.as_mut().unwrap().0
     }

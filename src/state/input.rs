@@ -1,16 +1,14 @@
 use super::prelude::*;
 
 use smithay::{
-    delegate_seat,
-    delegate_data_device,
     backend::input::{
         Event,
-        KeyState,
+        //KeyState,
         KeyboardKeyEvent,
         //AbsolutePositionEvent,
         PointerButtonEvent,
         PointerMotionEvent,
-        PointerAxisEvent
+        //PointerAxisEvent
     },
     input::{
         pointer::{
@@ -19,15 +17,16 @@ use smithay::{
             CursorImageAttributes as Attributes
         },
         keyboard::{
-            keysyms,
+            //keysyms,
             KeyboardHandle,
             FilterResult,
         },
     }
 };
 
-delegate_seat!(AppState);
-delegate_data_device!(AppState);
+smithay::delegate_seat!(@<E: Engine> App<E>);
+
+smithay::delegate_data_device!(@<E: Engine> App<E>);
 
 impl<B: InputBackend> Update<(InputEvent<B>, ScreenId)> for AppState {
     fn update (&mut self, (event, screen_id): (InputEvent<B>, ScreenId)) -> StdResult<()> {
@@ -91,11 +90,11 @@ impl Input {
 
 }
 
-impl SeatHandler for AppState {
+impl<E: Engine> SeatHandler for App<E> {
     type KeyboardFocus = WlSurface;
     type PointerFocus  = WlSurface;
 
-    fn seat_state (&mut self) -> &mut SeatState<AppState> {
+    fn seat_state (&mut self) -> &mut SeatState<Self> {
         &mut self.input.seat
     }
 
@@ -110,15 +109,15 @@ impl SeatHandler for AppState {
     }
 }
 
-impl DataDeviceHandler for AppState {
+impl<E: Engine> DataDeviceHandler for App<E> {
     fn data_device_state(&self) -> &DataDeviceState {
         &self.input.data_device
     }
 }
 
-impl ClientDndGrabHandler for AppState {}
+impl<E: Engine> ClientDndGrabHandler for App<E> {}
 
-impl ServerDndGrabHandler for AppState {}
+impl<E: Engine> ServerDndGrabHandler for App<E> {}
 
 /// Possible results of a keyboard action
 #[derive(Debug)]
@@ -236,9 +235,9 @@ pub struct Pointer {
 
 impl Pointer {
 
-    pub fn new (
+    pub fn new <E: Engine> (
         logger:  &Logger,
-        handle:  PointerHandle<AppState>,
+        handle:  PointerHandle<App<E>>,
         texture: Gles2Texture
     ) -> Result<Self, Box<dyn Error>> {
         Ok(Self {

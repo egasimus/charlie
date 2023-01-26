@@ -7,18 +7,116 @@ use self::prelude::*;
 use self::desktop::Desktop;
 use self::input::Input;
 
+use smithay::{
+    wayland::socket::ListeningSocketSource,
+    reexports::wayland_server::backend::{ClientId, ClientData, DisconnectReason},
+    reexports::calloop::{PostAction, Interest, Mode, generic::Generic}
+};
+
 /// Contains the compositor state.
-pub struct AppState {
-    logger:      Logger,
+pub struct App<E: Engine> {
+    pub logger:  Logger,
+    pub display: Rc<RefCell<Display<Self>>>,
+    pub events:  Rc<RefCell<EventLoop<'static, Self>>>,
     /// Commands to run after successful initialization
-    startup:     Vec<(String, Vec<String>)>,
+    pub startup: Vec<(String, Vec<String>)>,
     /// The collection of windows and their layouts
     pub desktop: Desktop,
     /// The collection of input devices
-    pub input:   Input
+    pub input:   Input,
+    /// Engine-specific state
+    pub engine:  E,
 }
 
-impl AppState {
+impl<E: Engine> App<E> {
+
+    pub fn new () -> StdResult<Self> {
+
+        // Create the logger
+        let (logger, _guard) = init_log();
+
+        // Create the event loop
+        let events = EventLoop::try_new()?;
+
+        // Create the display
+        let display = Display::new()?;
+
+        // Create the engine
+        let engine = E::new(&logger, &display.handle())?;
+
+        Ok(Self {
+            logger,
+            engine,
+            display: Rc::new(RefCell::new(display)),
+            events:  Rc::new(RefCell::new(events)),
+            startup: vec![],
+            desktop: Desktop::new::<Self>(logger, display)?,
+            input:   Input::new(logger, display)?,
+        })
+    }
+
+    /// Perform a procedure with this app instance as part of a method call chain.
+    pub fn with (self, cb: impl Fn(Self)->StdResult<Self>) -> StdResult<Self> {
+        cb(self)
+    }
+
+    /// Run an instance of an application.
+    pub fn run (mut self) -> StdResult<()> {
+
+        // Listen for events
+        let display = self.display.clone();
+        let fd = display.borrow_mut().backend().poll_fd().as_raw_fd();
+        self.events.borrow().handle().insert_source(
+            Generic::new(fd, Interest::READ, Mode::Level),
+            move |_, _, state| {
+                display.borrow_mut().dispatch_clients(state)?;
+                Ok(PostAction::Continue)
+            }
+        );
+
+        // Create a socket
+        let socket = ListeningSocketSource::new_auto(self.logger.clone()).unwrap();
+        let socket_name = socket.socket_name().to_os_string();
+
+        // Listen for new clients
+        let socket_logger  = self.logger.clone();
+        let mut socket_display = self.display.borrow().handle();
+        self.events.borrow().handle().insert_source(socket, move |client, _, _| {
+            debug!(socket_logger, "New client {client:?}");
+            socket_display.insert_client(
+                client.try_clone().expect("Could not clone socket for engine dispatcher"),
+                Arc::new(ClientState)
+            ).expect("Could not insert client in engine display");
+        });
+        std::env::set_var("WAYLAND_DISPLAY", &socket_name);
+
+        // Run main loop
+        let display = self.display.clone();
+        let events  = self.events.clone();
+
+        loop {
+
+            // Respond to user input
+            if let Err(e) = self.engine.update(&mut self) {
+                crit!(self.logger, "Update error: {e}");
+                break
+            }
+
+            // Render display
+            if let Err(e) = self.engine.render(&mut self) {
+                crit!(self.logger, "Render error: {e}");
+                break
+            }
+
+            // Flush display/client messages
+            display.borrow_mut().flush_clients()?;
+
+            // Dispatch state to next event loop tick
+            events.borrow_mut().dispatch(Some(Duration::from_millis(1)), &mut self);
+        }
+
+        Ok(())
+    }
 
     /// When the app is ready to run, this spawns the startup processes.
     pub fn ready (&self) -> Result<(), Box<dyn Error>> {
@@ -48,13 +146,12 @@ impl AppState {
 
 impl Widget for AppState {
 
-    fn new <T> (logger: &Logger, display: &DisplayHandle, events:  &LoopHandle<'static, T>)
+    fn new <E: Engine> (
+        logger:  &Logger,
+        display: &DisplayHandle,
+        events:  &LoopHandle<'static, App<E>>
+    )
         -> Result<Self, Box<dyn Error>>
-    where
-        T: GlobalDispatch<WlCompositor,    ()> +
-           GlobalDispatch<WlSubcompositor, ()> +
-           GlobalDispatch<XdgWmBase,       ()> +
-           'static
     {
         // Init xwayland
         crate::state::xwayland::init_xwayland(
@@ -63,7 +160,7 @@ impl Widget for AppState {
         )?;
         Ok(Self {
             logger:  logger.clone(),
-            desktop: Desktop::new::<T>(logger, display)?,
+            desktop: Desktop::new::<E>(logger, display)?,
             input:   Input::new(logger, display)?,
             startup: vec![],
         })
@@ -111,4 +208,11 @@ impl Widget for AppState {
         Ok(())
 
     }
+}
+
+struct ClientState;
+
+impl ClientData for ClientState {
+    fn initialized (&self, _client_id: ClientId) {}
+    fn disconnected (&self, _client_id: ClientId, _reason: DisconnectReason) {}
 }

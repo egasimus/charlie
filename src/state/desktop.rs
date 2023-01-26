@@ -1,5 +1,9 @@
 use super::prelude::*;
 
+smithay::delegate_compositor!(@<E: Engine> App<E>);
+
+smithay::delegate_xdg_shell!(@<E: Engine> App<E>);
+
 pub struct Desktop {
     logger: Logger,
     clock:  Clock<Monotonic>,
@@ -13,17 +17,14 @@ pub struct Desktop {
 
 impl Desktop {
 
-    pub fn new <T> (logger: &Logger, handle: &DisplayHandle) -> Result<Self, Box<dyn Error>>
-    where
-        T: GlobalDispatch<WlCompositor,    ()> +
-           GlobalDispatch<WlSubcompositor, ()> +
-           GlobalDispatch<XdgWmBase,       ()>
+    pub fn new <E: Engine> (logger: &Logger, handle: &DisplayHandle)
+        -> Result<Self, Box<dyn Error>>
     {
         Ok(Self {
             logger:     logger.clone(),
             clock:      Clock::new()?,
-            compositor: CompositorState::new::<T, _>(&handle, logger.clone()),
-            xdg_shell:  XdgShellState::new::<T, _>(&handle, logger.clone()),
+            compositor: CompositorState::new::<App<E>, _>(&handle, logger.clone()),
+            xdg_shell:  XdgShellState::new::<App<E>, _>(&handle, logger.clone()),
             windows:    vec![],
             screens:    vec![],
         })
@@ -75,12 +76,10 @@ impl Desktop {
 
 }
 
-delegate_compositor!(Desktop);
-
-impl CompositorHandler for Desktop {
+impl<E: Engine> CompositorHandler for App<E> {
 
     fn compositor_state (&mut self) -> &mut CompositorState {
-        &mut self.compositor
+        &mut self.state.desktop.compositor
     }
 
     /// Commit each surface, binding a state data buffer to it.
@@ -91,15 +90,21 @@ impl CompositorHandler for Desktop {
             RendererSurfaceState         as State,
             RendererSurfaceStateUserData as StateData
         };
+
         let mut surface = surface.clone();
+
         loop {
+
             let mut is_new = false;
+
             warn!(self.logger, "Init surface: {surface:?}");
+
             with_states(&surface, |surface_data| {
                 is_new = surface_data.data_map.insert_if_missing(||RefCell::new(State::default()));
                 let mut data = surface_data.data_map.get::<StateData>().unwrap().borrow_mut();
                 data.update_buffer(surface_data);
             });
+
             if is_new {
                 add_destruction_hook(&surface, |data| {
                     let data = data.data_map.get::<StateData>();
@@ -108,32 +113,34 @@ impl CompositorHandler for Desktop {
                     }
                 })
             }
+
             match get_parent(&surface) {
                 Some(parent) => surface = parent,
                 None => break
             }
+
         }
-        if let Some(window) = self.window_find(&surface) {
+
+        if let Some(window) = self.state.desktop.window_find(&surface) {
             window.on_commit();
         } else {
             warn!(self.logger, "could not find window for root toplevel surface {surface:?}");
         };
+
     }
 
 }
 
-delegate_xdg_shell!(Desktop);
-
-impl XdgShellHandler for Desktop {
+impl<E: Engine> XdgShellHandler for App<E> {
 
     fn xdg_shell_state (&mut self) -> &mut XdgShellState {
-        &mut self.xdg_shell
+        &mut self.state.desktop.xdg_shell
     }
 
     fn new_toplevel (&mut self, surface: ToplevelSurface) {
         debug!(self.logger, "New toplevel surface: {surface:?}");
         surface.send_configure();
-        self.window_add(Window::new(Kind::Xdg(surface)));
+        self.state.desktop.window_add(Window::new(Kind::Xdg(surface)));
     }
 
     fn new_popup (&mut self, surface: PopupSurface, positioner: PositionerState) {
@@ -201,7 +208,7 @@ impl XdgShellHandler for Desktop {
 
 pub struct ScreenState {
     pub center: Point<f64, Logical>,
-    size:   Size<f64, Logical>
+    size: Size<f64, Logical>
 }
 
 impl ScreenState {
@@ -237,13 +244,17 @@ impl WindowState {
             Kind::Xdg(xdgsurface) => xdgsurface.wl_surface(),
             Kind::X11(x11surface) => &x11surface.surface
         };
+
         with_states(surface, |surface_data| {
             if let Some(data) = surface_data.data_map.get::<RendererSurfaceStateUserData>() {
+
                 let data = &mut *data.borrow_mut();
+
                 let texture_id = (
                     TypeId::of::<<Gles2Renderer as Renderer>::TextureId>(),
                     renderer.id().clone()
                 );
+
                 if let Entry::Vacant(entry) = data.textures.entry(texture_id) {
                     if let Some(buffer) = data.buffer.as_ref() {
                         match renderer.import_buffer(
@@ -268,11 +279,15 @@ impl WindowState {
                         warn!(logger, "No buffer in {surface_data:?}")
                     }
                 }
+
             } else {
                 warn!(logger, "No RendererSurfaceState for {surface:?}")
             }
+
             Ok(())
+
         })?;
+
         Ok(())
     }
 
@@ -286,6 +301,7 @@ impl WindowState {
     )
         -> Result<(), Box<dyn Error>>
     {
+
         let (src, dest, damage): (Rectangle<f64, Buffer>, Rectangle<i32, Physical>, Rectangle<i32, Physical>) = (
             Rectangle::from_loc_and_size((0.0, 0.0), (size.w as f64, size.h as f64)),
             Rectangle::from_loc_and_size((
@@ -294,10 +310,12 @@ impl WindowState {
             ), size),
             Rectangle::from_loc_and_size((0, 0), size)
         );
+
         let surface = match self.window.toplevel() {
             Kind::Xdg(xdgsurface) => xdgsurface.wl_surface(),
             Kind::X11(x11surface) => &x11surface.surface
         };
+
         with_states(surface, |surface_data| {
             if let Some(data) = surface_data.data_map.get::<RendererSurfaceStateUserData>() {
                 if let Some(texture) = data.borrow().texture::<Gles2Renderer>(frame.id()) {
@@ -314,7 +332,9 @@ impl WindowState {
                 warn!(logger, "No RendererSurfaceState for {surface:?}")
             }
         });
+
         Ok(())
+
     }
 
 }

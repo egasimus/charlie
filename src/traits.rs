@@ -16,20 +16,13 @@ pub trait Render<'r, RenderParams> {
     fn render (&'r mut self, context: &'r mut RenderParams) -> StdResult<()>;
 }
 
-/// Marker trait for Render + Update
 pub trait Widget {
 
-    fn new <T> (
+    fn new <E: Engine> (
         logger:  &Logger,
         display: &DisplayHandle,
-        events:  &LoopHandle<'static, T>
-    ) -> StdResult<Self>
-    where
-        Self: Sized,
-        T: GlobalDispatch<WlCompositor,    ()> +
-           GlobalDispatch<WlSubcompositor, ()> +
-           GlobalDispatch<XdgWmBase,       ()> +
-           'static;
+        events:  &LoopHandle<'static, App<E>>
+    ) -> StdResult<Self> where Self: Sized;
 
     fn render (
         &mut self,

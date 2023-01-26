@@ -1,29 +1,23 @@
 pub(crate) use crate::{
     traits::*,
-    app::App,
-    state::{AppState, desktop::ScreenState},
+    state::App,
+    state::desktop::ScreenState
 };
 
 pub(crate) use std::{
     error::Error,
     rc::Rc,
     cell::{Cell, RefCell},
-    sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}},
+    sync::{Arc, Mutex, atomic::AtomicBool},
     time::{Instant, Duration},
     path::Path,
     collections::{HashMap, hash_map::Entry},
     os::fd::AsRawFd,
     any::TypeId,
-    marker::PhantomData
+    //marker::PhantomData
 };
 
-pub(crate) use slog::{Logger, Drain, o, info, debug, warn, trace, error, crit};
-
-pub(crate) use smithay::{
-    delegate_output,
-    delegate_shm,
-    delegate_dmabuf,
-};
+pub(crate) use slog::{Logger, Drain, o, info, debug, warn, error, crit};
 
 pub(crate) use smithay::backend::{
     input::{
@@ -33,7 +27,7 @@ pub(crate) use smithay::backend::{
     renderer::{
         Renderer,
         Frame,
-        damage::DamageTrackedRenderer,
+        //damage::DamageTrackedRenderer,
         gles2::{
             Gles2Renderer, 
             Gles2Frame,
@@ -50,7 +44,7 @@ pub(crate) use smithay::reexports::calloop::{EventLoop, LoopHandle};
 
 pub(crate) use smithay::reexports::wayland_server::{Display, DisplayHandle};
 
-pub(crate) use smithay::utils::{Time, Point, Size, Rectangle, Logical, Physical};
+pub(crate) use smithay::utils::{Point, Size, Rectangle, Logical, Physical};
 
 pub(crate) fn init_log () -> (Logger, slog_scope::GlobalLoggerGuard) {
     // A logger facility, here we use the terminal here
@@ -99,12 +93,3 @@ pub fn import_bitmap (renderer: &mut Gles2Renderer, path: impl AsRef<Path>)
 }
 
 pub type ScreenId = usize;
-
-pub(crate) use smithay::reexports::{
-    wayland_server::{
-        GlobalDispatch,
-        protocol::wl_compositor::WlCompositor,
-        protocol::wl_subcompositor::WlSubcompositor
-    },
-    wayland_protocols::xdg::shell::server::xdg_wm_base::XdgWmBase
-};
