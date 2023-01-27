@@ -47,16 +47,16 @@ pub trait Engine: Outputs + Inputs + 'static {
     /// Obtain a mutable reference to the renderer.
     fn renderer (&self)
         -> RefMut<Gles2Renderer>;
-    fn update <U: RootUpdate + 'static> (&self, context: &mut U)
-        -> StdResult<()>;
-    fn render <R: RootRender + 'static> (&self, context: &mut R)
-        -> StdResult<()>;
+    fn update <U: EngineApp<Self> + 'static> (app: &mut U)
+        -> StdResult<()> where Self: Sized;
+    fn render <R: EngineApp<Self> + 'static> (app: &mut R)
+        -> StdResult<()> where Self: Sized;
 }
 
-pub trait RootUpdate {
-}
+pub trait EngineApp<E: Engine> {
 
-pub trait RootRender {
+    fn engine (&mut self) -> &mut E;
+
     fn render (
         &mut self,
         renderer: &mut Gles2Renderer,
@@ -64,6 +64,7 @@ pub trait RootRender {
         size:     &Size<i32, Physical>,
         screen:   ScreenId
     ) -> StdResult<()>;
+
 }
 
 ///// All static instances of types that implement Render + Update + Outputs + Inputs are engines

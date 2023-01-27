@@ -25,7 +25,7 @@ pub struct App<E: Engine> {
     /// The collection of input devices
     pub input:   Input<E>,
     /// Engine-specific state
-    pub engine:  Rc<E>,
+    pub engine:  E,
 }
 
 impl<E: Engine> App<E> {
@@ -41,6 +41,9 @@ impl<E: Engine> App<E> {
         // Create the display
         let display = Display::new()?;
 
+        // Create the engine
+        let engine = E::new(&logger, &display.handle())?;
+
         // Init xwayland
         crate::state::xwayland::init_xwayland(
             &logger,
@@ -55,9 +58,9 @@ impl<E: Engine> App<E> {
 
         Ok(Self {
             logger:  logger.clone(),
-            engine:  Rc::new(E::new(&logger, &display.handle())?),
-            display: Rc::new(RefCell::new(display)),
             events:  Rc::new(RefCell::new(events)),
+            display: Rc::new(RefCell::new(display)),
+            engine,
             startup: vec![],
             desktop,
             input,
@@ -102,18 +105,17 @@ impl<E: Engine> App<E> {
         // Run main loop
         let display = self.display.clone();
         let events  = self.events.clone();
-        let engine  = self.engine.clone();
 
         loop {
 
             // Respond to user input
-            if let Err(e) = engine.update(&mut self) {
+            if let Err(e) = E::update(&mut self) {
                 crit!(self.logger, "Update error: {e}");
                 break
             }
 
             // Render display
-            if let Err(e) = engine.render(&mut self) {
+            if let Err(e) = E::render(&mut self) {
                 crit!(self.logger, "Render error: {e}");
                 break
             }
@@ -154,7 +156,11 @@ impl<E: Engine> App<E> {
 
 }
 
-impl<E: Engine> RootRender for App<E> {
+impl<E: Engine> EngineApp<E> for App<E> {
+
+    fn engine (&mut self) -> &mut E {
+        &mut self.engine
+    }
 
     /// Render the desktop and pointer for this output
     fn render (
@@ -198,9 +204,7 @@ impl<E: Engine> RootRender for App<E> {
         Ok(())
 
     }
-}
 
-impl<E: Engine> RootUpdate for App<E> {
 }
 
 struct ClientState;
