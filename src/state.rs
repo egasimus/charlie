@@ -140,15 +140,15 @@ impl<E: Engine> App<E> {
         Ok(())
     }
 
-    pub fn startup (&mut self, cmd: impl AsRef<str>, args: &[&str]) -> StdResult<&mut Self> {
+    pub fn startup (self, cmd: impl AsRef<str>, args: &[&str]) -> StdResult<Self> {
         Ok(self)
     }
 
-    pub fn output (&mut self, cmd: impl AsRef<str>, w: i32, h: i32, x: f64, y: f64) -> StdResult<&mut Self> {
+    pub fn output (self, cmd: impl AsRef<str>, w: i32, h: i32, x: f64, y: f64) -> StdResult<Self> {
         Ok(self)
     }
 
-    pub fn input (&mut self, cmd: impl AsRef<str>, cursor: impl AsRef<str>) -> StdResult<&mut Self> {
+    pub fn input (self, cmd: impl AsRef<str>, cursor: impl AsRef<str>) -> StdResult<Self> {
         Ok(self)
     }
 

@@ -7,7 +7,7 @@ pub(crate) use crate::{
 pub(crate) use std::{
     error::Error,
     rc::Rc,
-    cell::{Cell, RefCell},
+    cell::{Cell, RefCell, RefMut},
     sync::{Arc, Mutex, atomic::AtomicBool},
     time::{Instant, Duration},
     path::Path,

@@ -55,15 +55,15 @@ smithay::delegate_dmabuf!(App<WinitEngine>);
 pub struct WinitEngine {
     logger:        Logger,
     running:       Arc<AtomicBool>,
-    started:       Option<Instant>,
+    started:       Cell<Option<Instant>>,
     winit_events:  Rc<RefCell<WinitEventLoop<()>>>,
     egl_display:   EGLDisplay,
     egl_context:   EGLContext,
     renderer:      Rc<RefCell<Gles2Renderer>>,
     shm:           ShmState,
-    dmabuf_state:  DmabufState,
+    dmabuf_state:  RefCell<DmabufState>,
     dmabuf_global: DmabufGlobal,
-    outputs:       HashMap<WindowId, WinitHostWindow>,
+    outputs:       RefCell<HashMap<WindowId, WinitHostWindow>>,
     out_manager:   OutputManagerState,
 }
 
@@ -106,14 +106,14 @@ impl Engine for WinitEngine {
             shm:           ShmState::new::<App<Self>, _>(&display, vec![], logger.clone()),
             out_manager:   OutputManagerState::new_with_xdg_output::<App<Self>>(&display),
             running:       Arc::new(AtomicBool::new(true)),
-            started:       None,
+            started:       Cell::new(None),
             winit_events:  Rc::new(RefCell::new(winit_events)),
             egl_display,
             egl_context,
-            dmabuf_state,
+            dmabuf_state:  RefCell::new(dmabuf_state),
             dmabuf_global,
             renderer:      Rc::new(RefCell::new(renderer)),
-            outputs:       HashMap::new(),
+            outputs:       RefCell::new(HashMap::new()),
         })
     }
 
@@ -121,20 +121,20 @@ impl Engine for WinitEngine {
         self.logger.clone()
     }
 
-    fn renderer (&self) -> &mut Gles2Renderer {
-        &mut *self.renderer.borrow_mut()
+    fn renderer (&self) -> RefMut<Gles2Renderer> {
+        self.renderer.borrow_mut()
     }
 
     /// Render to each host window
     fn render <R: RootRender + 'static> (&self, state: &mut R) -> StdResult<()> {
-        let renderer = self.renderer();
-        for (_, output) in self.outputs.iter() {
+        let mut renderer = self.renderer();
+        for (_, output) in self.outputs.borrow().iter() {
             if let Some(size) = output.resized.take() {
                 output.surface.resize(size.w, size.h, 0, 0);
             }
             renderer.bind(output.surface.clone())?;
             let size = output.surface.get_size().unwrap();
-            state.render(renderer, &output.output, &size, output.screen)?;
+            state.render(&mut *renderer, &output.output, &size, output.screen)?;
             output.surface.swap_buffers(None)?;
         }
         Ok(())
@@ -143,12 +143,12 @@ impl Engine for WinitEngine {
     /// Dispatch input events from the host window to the hosted root widget.
     fn update <U: RootUpdate + 'static> (&self, state: &mut U) -> StdResult<()> {
         let mut closed = false;
-        if self.started.is_none() {
+        if self.started.get().is_none() {
             //let event = InputEvent::DeviceAdded { device: WinitVirtualDevice };
             //callback(0, WinitEvent::Input(event));
-            self.started = Some(Instant::now());
+            self.started.set(Some(Instant::now()));
         }
-        let started = &self.started.unwrap();
+        let started = &self.started.get().unwrap();
         let logger = self.logger.clone();
         let winit_events = self.winit_events.clone();
         winit_events.borrow_mut().run_return(|event, _target, control_flow| {
@@ -160,36 +160,8 @@ impl Engine for WinitEngine {
                 Event::RedrawRequested(_id) => {
                     //callback(0, WinitEvent::Refresh);
                 }
-                Event::WindowEvent { window_id, event } => match self.window_get(&window_id) {
-                    Some(window) => {
-                        let duration = Instant::now().duration_since(*started);
-                        let nanos    = duration.subsec_nanos() as u64;
-                        let time     = ((1000 * duration.as_secs()) + (nanos / 1_000_000)) as u32;
-                        let result   = match event {
-                            WindowEvent::CloseRequested |
-                            WindowEvent::Destroyed      |
-                            WindowEvent::Resized(_)     |
-                            WindowEvent::Focused(_)     |
-                            WindowEvent::ScaleFactorChanged { .. }
-                                => Self::update_window(time, window, event),
-                            WindowEvent::KeyboardInput { .. }
-                                => Self::update_keyboard(time, window, event),
-                            WindowEvent::CursorMoved { .. } |
-                            WindowEvent::MouseWheel  { .. } |
-                            WindowEvent::MouseInput  { .. }
-                                => Self::update_mouse(time, window, event),
-                            WindowEvent::Touch { .. }
-                                => Self::update_touch(time, window, event),
-                            _ => vec![],
-                        };
-                        if window.closing {
-                            self.window_del(&window_id);
-                            closed = true;
-                        }
-                    },
-                    None => {
-                        warn!(logger, "Received event for unknown window id {window_id:?}")
-                    }
+                Event::WindowEvent { window_id, event } => {
+                    closed = self.window_update(&window_id, event)
                 }
                 _ => {}
             }
@@ -207,20 +179,56 @@ impl Engine for WinitEngine {
 
 impl WinitEngine {
 
-    pub fn window_get (&mut self, window_id: &WindowId) -> Option<&mut WinitHostWindow> {
-        self.outputs.get_mut(&window_id)
+    pub fn window_add (&self, window: WinitHostWindow) -> () {
+        let window_id = window.id();
+        self.outputs.borrow_mut().insert(window_id, window);
     }
 
-    pub fn window_del (&mut self, window_id: &WindowId) -> () {
-        self.outputs.remove(&window_id);
+    pub fn window_update <'a> (&self, window_id: &WindowId, event: WindowEvent<'a>) -> bool {
+        match self.outputs.borrow().get(window_id) {
+            Some(window) => {
+                let duration = Instant::now().duration_since(self.started.get().unwrap());
+                let nanos    = duration.subsec_nanos() as u64;
+                let time     = ((1000 * duration.as_secs()) + (nanos / 1_000_000)) as u32;
+                let result   = match event {
+                    WindowEvent::CloseRequested |
+                    WindowEvent::Destroyed      |
+                    WindowEvent::Resized(_)     |
+                    WindowEvent::Focused(_)     |
+                    WindowEvent::ScaleFactorChanged { .. }
+                        => Self::update_window(time, window, event),
+                    WindowEvent::KeyboardInput { .. }
+                        => Self::update_keyboard(time, window, event),
+                    WindowEvent::CursorMoved { .. } |
+                    WindowEvent::MouseWheel  { .. } |
+                    WindowEvent::MouseInput  { .. }
+                        => Self::update_mouse(time, window, event),
+                    WindowEvent::Touch { .. }
+                        => Self::update_touch(time, window, event),
+                    _ => vec![],
+                };
+                if window.closing.get() {
+                    self.window_del(&window_id);
+                    return true;
+                }
+            },
+            None => {
+                warn!(self.logger, "Received event for unknown window id {window_id:?}")
+            }
+        }
+        false
+    }
+
+    pub fn window_del (&self, window_id: &WindowId) -> () {
+        self.outputs.borrow_mut().remove(&window_id);
     }
 
     fn update_window <'a> (
-        time: u32, window: &mut WinitHostWindow, event: WindowEvent<'a>
+        time: u32, window: &WinitHostWindow, event: WindowEvent<'a>
     ) -> Vec<WinitEvent> {
         match event {
             WindowEvent::CloseRequested | WindowEvent::Destroyed => {
-                window.closing = true;
+                window.closing.set(true);
                 vec![WinitEvent::Input(InputEvent::DeviceRemoved { device: WinitVirtualDevice, })]
             }
             WindowEvent::Resized(psize) => {
@@ -249,19 +257,19 @@ impl WinitEngine {
     }
 
     fn update_keyboard <'a> (
-        time: u32, window: &mut WinitHostWindow, event: WindowEvent<'a>
+        time: u32, window: &WinitHostWindow, event: WindowEvent<'a>
     ) -> Vec<WinitEvent> {
         match event {
             WindowEvent::KeyboardInput { input, .. } => {
                 let KeyboardInput { scancode, state, .. } = input;
-                match state {
+                window.rollover.set(match state {
                     ElementState::Pressed
-                        => window.rollover += 1,
+                        => window.rollover.get() + 1,
                     ElementState::Released
-                        => window.rollover = window.rollover.checked_sub(1).unwrap_or(0)
-                };
+                        => window.rollover.get().checked_sub(1).unwrap_or(0)
+                });
                 let event = WinitKeyboardInputEvent {
-                    time, key: scancode, count: window.rollover, state,
+                    time, key: scancode, count: window.rollover.get(), state,
                 };
                 vec![WinitEvent::Input(InputEvent::Keyboard { event })]
             }
@@ -270,7 +278,7 @@ impl WinitEngine {
     }
 
     fn update_mouse <'a> (
-        time: u32, window: &mut WinitHostWindow, event: WindowEvent<'a>
+        time: u32, window: &WinitHostWindow, event: WindowEvent<'a>
     ) -> Vec<WinitEvent> {
         match event {
             WindowEvent::CursorMoved { position, .. } => {
@@ -292,7 +300,7 @@ impl WinitEngine {
     }
 
     fn update_touch <'a> (
-        time: u32, window: &mut WinitHostWindow, event: WindowEvent<'a>
+        time: u32, window: &WinitHostWindow, event: WindowEvent<'a>
     ) -> Vec<WinitEvent> {
         let mut events = vec![];
         let size   = window.size.clone();
@@ -323,6 +331,10 @@ impl WinitEngine {
         };
         events
     }
+
+    fn dmabuf_state(&self) -> &mut DmabufState {
+        self.dmabuf_state()
+    }
 }
 
 impl Inputs for WinitEngine {
@@ -345,7 +357,7 @@ impl Outputs for WinitEngine {
             screen
         )?;
         let window_id = window.id();
-        self.outputs.insert(window_id, window);
+        self.outputs.borrow_mut().insert(window_id, window);
         Ok(())
     }
 }
@@ -362,7 +374,7 @@ impl ShmHandler for App<WinitEngine> {
 
 impl DmabufHandler for App<WinitEngine> {
     fn dmabuf_state(&mut self) -> &mut DmabufState {
-        &mut self.engine.dmabuf_state
+        self.engine.dmabuf_state()
     }
     fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf) -> Result<(), ImportError> {
         self.engine.renderer()
@@ -405,7 +417,7 @@ pub struct WinitHostWindow {
     height:   i32,
     pub window:   WinitWindow,
     /// Count of currently pressed keys
-    pub rollover: u32,
+    pub rollover: Cell<u32>,
     /// Is this winit window hosted under X11 (as opposed to a Wayland session?)
     pub is_x11:   bool,
     /// Which viewport is rendered to this window
@@ -419,7 +431,7 @@ pub struct WinitHostWindow {
     /// Whether a new size has been specified, to apply on next render
     pub resized:  Rc<Cell<Option<Size<i32, Physical>>>>,
     /// Whether the window is closing
-    pub closing:  bool,
+    pub closing:  Cell<bool>,
 }
 
 /// Build a host window
@@ -461,8 +473,8 @@ impl<'a> WinitHostWindow {
 
         Ok(Self {
             logger:   logger.clone(),
-            closing:  false,
-            rollover: 0,
+            closing:  Cell::new(false),
+            rollover: Cell::new(0),
             is_x11:   window.wayland_surface().is_none(),
             screen,
             output,

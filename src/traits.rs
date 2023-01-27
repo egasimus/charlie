@@ -46,7 +46,7 @@ pub trait Engine: Outputs + Inputs + 'static {
         -> Logger;
     /// Obtain a mutable reference to the renderer.
     fn renderer (&self)
-        -> &mut Gles2Renderer;
+        -> RefMut<Gles2Renderer>;
     fn update <U: RootUpdate + 'static> (&self, context: &mut U)
         -> StdResult<()>;
     fn render <R: RootRender + 'static> (&self, context: &mut R)
