@@ -53,17 +53,18 @@ smithay::delegate_dmabuf!(App<WinitEngine>);
 /// Contains the winit and wayland event loops, spawns one or more windows,
 /// and dispatches events to them.
 pub struct WinitEngine {
-    logger:       Logger,
-    running:      Arc<AtomicBool>,
-    started:      Option<Instant>,
-    winit_events: Rc<RefCell<WinitEventLoop<()>>>,
-    egl_display:  EGLDisplay,
-    egl_context:  EGLContext,
-    renderer:     Gles2Renderer,
-    shm:          ShmState,
-    dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
-    outputs:      HashMap<WindowId, WinitHostWindow>,
-    out_manager:  OutputManagerState,
+    logger:        Logger,
+    running:       Arc<AtomicBool>,
+    started:       Option<Instant>,
+    winit_events:  Rc<RefCell<WinitEventLoop<()>>>,
+    egl_display:   EGLDisplay,
+    egl_context:   EGLContext,
+    renderer:      Rc<RefCell<Gles2Renderer>>,
+    shm:           ShmState,
+    dmabuf_state:  DmabufState,
+    dmabuf_global: DmabufGlobal,
+    outputs:       HashMap<WindowId, WinitHostWindow>,
+    out_manager:   OutputManagerState,
 }
 
 impl Engine for WinitEngine {
@@ -92,31 +93,27 @@ impl Engine for WinitEngine {
         let mut renderer = make_renderer(logger, &egl_context)?;
 
         // Init dmabuf support
-        let dmabuf_state = if renderer.bind_wl_display(&display).is_ok() {
-            info!(logger, "EGL hardware-acceleration enabled");
-            let mut state = DmabufState::new();
-            let global = state.create_global::<App<Self>, _>(
-                display,
-                renderer.dmabuf_formats().cloned().collect::<Vec<_>>(),
-                logger.clone(),
-            );
-            Some((state, global))
-        } else {
-            None
-        };
+        renderer.bind_wl_display(&display)?;
+        let mut dmabuf_state = DmabufState::new();
+        let dmabuf_global = dmabuf_state.create_global::<App<Self>, _>(
+            display,
+            renderer.dmabuf_formats().cloned().collect::<Vec<_>>(),
+            logger.clone(),
+        );
 
         Ok(Self {
-            logger:       logger.clone(),
-            shm:          ShmState::new::<App<Self>, _>(&display, vec![], logger.clone()),
-            out_manager:  OutputManagerState::new_with_xdg_output::<App<Self>>(&display),
-            running:      Arc::new(AtomicBool::new(true)),
-            started:      None,
-            winit_events: Rc::new(RefCell::new(winit_events)),
+            logger:        logger.clone(),
+            shm:           ShmState::new::<App<Self>, _>(&display, vec![], logger.clone()),
+            out_manager:   OutputManagerState::new_with_xdg_output::<App<Self>>(&display),
+            running:       Arc::new(AtomicBool::new(true)),
+            started:       None,
+            winit_events:  Rc::new(RefCell::new(winit_events)),
             egl_display,
             egl_context,
             dmabuf_state,
-            renderer,
-            outputs:      HashMap::new(),
+            dmabuf_global,
+            renderer:      Rc::new(RefCell::new(renderer)),
+            outputs:       HashMap::new(),
         })
     }
 
@@ -124,26 +121,27 @@ impl Engine for WinitEngine {
         self.logger.clone()
     }
 
-    fn renderer (&mut self) -> &mut Gles2Renderer {
-        &mut self.renderer
+    fn renderer (&self) -> &mut Gles2Renderer {
+        &mut *self.renderer.borrow_mut()
     }
 
     /// Render to each host window
-    fn render <R: RootRender + 'static> (&mut self, state: &mut R) -> StdResult<()> {
+    fn render <R: RootRender + 'static> (&self, state: &mut R) -> StdResult<()> {
+        let renderer = self.renderer();
         for (_, output) in self.outputs.iter() {
             if let Some(size) = output.resized.take() {
                 output.surface.resize(size.w, size.h, 0, 0);
             }
-            self.renderer.bind(output.surface.clone())?;
+            renderer.bind(output.surface.clone())?;
             let size = output.surface.get_size().unwrap();
-            state.render(&mut self.renderer, &output.output, &size, output.screen)?;
+            state.render(renderer, &output.output, &size, output.screen)?;
             output.surface.swap_buffers(None)?;
         }
         Ok(())
     }
 
     /// Dispatch input events from the host window to the hosted root widget.
-    fn update <U: RootUpdate + 'static> (&mut self, state: &mut U) -> StdResult<()> {
+    fn update <U: RootUpdate + 'static> (&self, state: &mut U) -> StdResult<()> {
         let mut closed = false;
         if self.started.is_none() {
             //let event = InputEvent::DeviceAdded { device: WinitVirtualDevice };
@@ -364,10 +362,13 @@ impl ShmHandler for App<WinitEngine> {
 
 impl DmabufHandler for App<WinitEngine> {
     fn dmabuf_state(&mut self) -> &mut DmabufState {
-        &mut self.engine.dmabuf_state.as_mut().unwrap().0
+        &mut self.engine.dmabuf_state
     }
     fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf) -> Result<(), ImportError> {
-        self.engine.renderer.import_dmabuf(&dmabuf, None).map(|_| ()).map_err(|_| ImportError::Failed)
+        self.engine.renderer()
+            .import_dmabuf(&dmabuf, None)
+            .map(|_| ())
+            .map_err(|_| ImportError::Failed)
     }
 }
 
