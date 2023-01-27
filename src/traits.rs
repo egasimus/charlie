@@ -59,10 +59,9 @@ pub trait EngineApp<E: Engine> {
 
     fn render (
         &mut self,
-        renderer: &mut Gles2Renderer,
-        output:   &Output,
-        size:     &Size<i32, Physical>,
-        screen:   ScreenId
+        output: &Output,
+        size:   &Size<i32, Physical>,
+        screen: ScreenId
     ) -> StdResult<()>;
 
 }

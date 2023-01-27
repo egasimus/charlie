@@ -30,10 +30,7 @@ pub struct App<E: Engine> {
 
 impl<E: Engine> App<E> {
 
-    pub fn new () -> StdResult<Self> {
-
-        // Create the logger
-        let (logger, _guard) = init_log();
+    pub fn new (logger: Logger) -> StdResult<Self> {
 
         // Create the event loop
         let events = EventLoop::try_new()?;
@@ -84,7 +81,7 @@ impl<E: Engine> App<E> {
                 display.borrow_mut().dispatch_clients(state)?;
                 Ok(PostAction::Continue)
             }
-        );
+        )?;
 
         // Create a socket
         let socket = ListeningSocketSource::new_auto(self.logger.clone()).unwrap();
@@ -99,7 +96,7 @@ impl<E: Engine> App<E> {
                 client.try_clone().expect("Could not clone socket for engine dispatcher"),
                 Arc::new(ClientState)
             ).expect("Could not insert client in engine display");
-        });
+        })?;
         std::env::set_var("WAYLAND_DISPLAY", &socket_name);
 
         // Run main loop
@@ -124,7 +121,7 @@ impl<E: Engine> App<E> {
             display.borrow_mut().flush_clients()?;
 
             // Dispatch state to next event loop tick
-            events.borrow_mut().dispatch(Some(Duration::from_millis(1)), &mut self);
+            events.borrow_mut().dispatch(Some(Duration::from_millis(1)), &mut self)?;
         }
 
         Ok(())
@@ -146,11 +143,12 @@ impl<E: Engine> App<E> {
         Ok(self)
     }
 
-    pub fn output (self, cmd: impl AsRef<str>, w: i32, h: i32, x: f64, y: f64) -> StdResult<Self> {
+    pub fn output (mut self, name: &str, w: i32, h: i32, x: f64, y: f64) -> StdResult<Self> {
+        self.engine.output_added(name, 0, w, h)?;
         Ok(self)
     }
 
-    pub fn input (self, cmd: impl AsRef<str>, cursor: impl AsRef<str>) -> StdResult<Self> {
+    pub fn input (self, name: impl AsRef<str>, cursor: impl AsRef<str>) -> StdResult<Self> {
         Ok(self)
     }
 
@@ -165,11 +163,12 @@ impl<E: Engine> EngineApp<E> for App<E> {
     /// Render the desktop and pointer for this output
     fn render (
         &mut self,
-        renderer: &mut Gles2Renderer,
-        output:   &Output,
-        size:     &Size<i32, Physical>,
-        screen:   ScreenId
+        output: &Output,
+        size:   &Size<i32, Physical>,
+        screen: ScreenId
     ) -> StdResult<()> {
+
+        let mut renderer = self.engine.renderer();
 
         // Get the render parameters
         let (size, transform, scale) = (
@@ -179,7 +178,7 @@ impl<E: Engine> EngineApp<E> for App<E> {
         );
 
         // Import window surfaces
-        self.desktop.import(renderer)?;
+        self.desktop.import(&mut *renderer)?;
 
         // Begin frame
         let mut frame = renderer.render(size, Transform::Flipped180)?;

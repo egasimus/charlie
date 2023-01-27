@@ -47,7 +47,7 @@ pub(crate) use smithay::reexports::wayland_server::{Display, DisplayHandle};
 pub(crate) use smithay::utils::{Point, Size, Rectangle, Logical, Physical};
 
 pub(crate) fn init_log () -> (Logger, slog_scope::GlobalLoggerGuard) {
-    // A logger facility, here we use the terminal here
+
     let log = if std::env::var("ANVIL_MUTEX_LOG").is_ok() {
         slog::Logger::root(std::sync::Mutex::new(slog_term::term_full().fuse()).fuse(), o!())
     } else {
@@ -56,10 +56,15 @@ pub(crate) fn init_log () -> (Logger, slog_scope::GlobalLoggerGuard) {
             o!(),
         )
     };
+
     let _guard = slog_scope::set_global_logger(log.clone());
+
     slog_stdlog::init().expect("Could not setup log backend");
+
     debug!(&log, "Logger initialized");
+
     (log, _guard)
+
 }
 
 pub fn import_bitmap (renderer: &mut Gles2Renderer, path: impl AsRef<Path>)

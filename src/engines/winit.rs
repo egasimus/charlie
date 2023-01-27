@@ -63,7 +63,7 @@ pub struct WinitEngine {
     shm:           ShmState,
     dmabuf_state:  DmabufState,
     dmabuf_global: DmabufGlobal,
-    outputs:       RefCell<HashMap<WindowId, WinitHostWindow>>,
+    outputs:       Rc<RefCell<HashMap<WindowId, WinitHostWindow>>>,
     out_manager:   OutputManagerState,
 }
 
@@ -113,7 +113,7 @@ impl Engine for WinitEngine {
             dmabuf_state,
             dmabuf_global,
             renderer:      Rc::new(RefCell::new(renderer)),
-            outputs:       RefCell::new(HashMap::new()),
+            outputs:       Rc::new(RefCell::new(HashMap::new())),
         })
     }
 
@@ -127,15 +127,14 @@ impl Engine for WinitEngine {
 
     /// Render to each host window
     fn render <R: EngineApp<Self> + 'static> (app: &mut R) -> StdResult<()> {
-        let engine = app.engine();
-        let mut renderer = engine.renderer();
-        for (_, output) in engine.outputs.borrow().iter() {
+        let outputs = app.engine().outputs.clone();
+        for (_, output) in outputs.borrow().iter() {
             if let Some(size) = output.resized.take() {
                 output.surface.resize(size.w, size.h, 0, 0);
             }
-            renderer.bind(output.surface.clone())?;
+            app.engine().renderer().bind(output.surface.clone())?;
             let size = output.surface.get_size().unwrap();
-            app.render(&mut *renderer, &output.output, &size, output.screen)?;
+            app.render(&output.output, &size, output.screen)?;
             output.surface.swap_buffers(None)?;
         }
         Ok(())
@@ -470,6 +469,7 @@ impl<'a> WinitHostWindow {
             scale_factor:  window.scale_factor(),
         };
 
+
         Ok(Self {
             logger:   logger.clone(),
             closing:  Cell::new(false),
@@ -500,14 +500,18 @@ impl<'a> WinitHostWindow {
         width:  i32,
         height: i32
     ) -> Result<WinitWindow, Box<dyn Error>> {
+
         debug!(logger, "Building Winit window: {title} ({width}x{height})");
+
         let window = WindowBuilder::new()
             .with_inner_size(LogicalSize::new(width, height))
             .with_title(title)
             .with_visible(true)
             .build(events)
             .map_err(WinitError::InitFailed)?;
+
         Ok(window)
+
     }
 
     /// Obtain the window surface (varies on whether winit is running in wayland or x11)

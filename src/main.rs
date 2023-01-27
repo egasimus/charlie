@@ -9,7 +9,8 @@ use crate::prelude::*;
 use crate::engines::winit::WinitEngine;
 
 fn main () -> StdResult<()> {
-    App::<WinitEngine>::new()?
+    let (logger, _guard) = init_log();
+    App::<WinitEngine>::new(logger)?
         .startup("glxgears", &[])?
         .startup("wezterm", &[])?
         .output("Alice",  720, 540, 0.0, 0.0)?
