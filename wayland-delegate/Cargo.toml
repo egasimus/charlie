@@ -1,0 +1,12 @@
+[package]
+name    = "wayland-delegate"
+version = "0.1.0"
+edition = "2018"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "^1"
+syn   = "^1"
+quote = "^1"

@@ -44,11 +44,11 @@ use smithay::{
 
 use wayland_egl as wegl;
 
-smithay::delegate_output!(App<WinitEngine>);
+smithay::delegate_output!(dyn App<WinitEngine>);
 
-smithay::delegate_shm!(App<WinitEngine>);
+smithay::delegate_shm!(dyn App<WinitEngine>);
 
-smithay::delegate_dmabuf!(App<WinitEngine>);
+smithay::delegate_dmabuf!(dyn App<WinitEngine>);
 
 /// Contains the winit and wayland event loops, spawns one or more windows,
 /// and dispatches events to them.
@@ -126,7 +126,7 @@ impl Engine for WinitEngine {
     }
 
     /// Render to each host window
-    fn render <R: EngineApp<Self> + 'static> (app: &mut R) -> StdResult<()> {
+    fn render <R: App<Self> + 'static> (app: &mut R) -> StdResult<()> {
         let outputs = app.engine().outputs.clone();
         for (_, output) in outputs.borrow().iter() {
             if let Some(size) = output.resized.take() {
@@ -141,7 +141,7 @@ impl Engine for WinitEngine {
     }
 
     /// Dispatch input events from the host window to the hosted root widget.
-    fn update <U: EngineApp<Self> + 'static> (app: &mut U) -> StdResult<()> {
+    fn update <U: App<Self> + 'static> (app: &mut U) -> StdResult<()> {
         let engine = app.engine();
         let mut closed = false;
         if engine.started.get().is_none() {
@@ -360,17 +360,19 @@ impl Outputs for WinitEngine {
     }
 }
 
-impl BufferHandler for App<WinitEngine> {
+impl<T: App<WinitEngine>> BufferHandler for T {
     fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
 }
 
-impl ShmHandler for App<WinitEngine> {
+#[delegate_shm]
+impl<T: App<WinitEngine>> ShmHandler for T {
     fn shm_state(&self) -> &ShmState {
         &self.engine.shm
     }
 }
 
-impl DmabufHandler for App<WinitEngine> {
+#[delegate_dmabuf]
+impl<T: App<WinitEngine>> DmabufHandler for T {
     fn dmabuf_state(&mut self) -> &mut DmabufState {
         &mut self.engine.dmabuf_state
     }

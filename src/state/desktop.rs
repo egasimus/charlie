@@ -1,8 +1,8 @@
 use super::prelude::*;
 
-smithay::delegate_compositor!(@<E: Engine> App<E>);
+smithay::delegate_compositor!(@<E: Engine> Charlie<E>);
 
-smithay::delegate_xdg_shell!(@<E: Engine> App<E>);
+smithay::delegate_xdg_shell!(@<E: Engine> Charlie<E>);
 
 pub struct Desktop {
     logger: Logger,
@@ -23,8 +23,8 @@ impl Desktop {
         Ok(Self {
             logger:     logger.clone(),
             clock:      Clock::new()?,
-            compositor: CompositorState::new::<App<E>, _>(&handle, logger.clone()),
-            xdg_shell:  XdgShellState::new::<App<E>, _>(&handle, logger.clone()),
+            compositor: CompositorState::new::<Charlie<E>, _>(&handle, logger.clone()),
+            xdg_shell:  XdgShellState::new::<Charlie<E>, _>(&handle, logger.clone()),
             windows:    vec![],
             screens:    vec![],
         })
@@ -76,7 +76,7 @@ impl Desktop {
 
 }
 
-impl<E: Engine> CompositorHandler for App<E> {
+impl<E: Engine> CompositorHandler for Charlie<E> {
 
     fn compositor_state (&mut self) -> &mut CompositorState {
         &mut self.desktop.compositor
@@ -131,7 +131,7 @@ impl<E: Engine> CompositorHandler for App<E> {
 
 }
 
-impl<E: Engine> XdgShellHandler for App<E> {
+impl<E: Engine> XdgShellHandler for Charlie<E> {
 
     fn xdg_shell_state (&mut self) -> &mut XdgShellState {
         &mut self.desktop.xdg_shell

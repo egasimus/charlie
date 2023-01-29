@@ -25,18 +25,18 @@ use smithay::{
     wayland::input_method::InputMethodSeat
 };
 
-smithay::delegate_seat!(@<E: Engine> App<E>);
+smithay::delegate_seat!(@<E: Engine> Charlie<E>);
 
-smithay::delegate_data_device!(@<E: Engine> App<E>);
+smithay::delegate_data_device!(@<E: Engine> Charlie<E>);
 
-impl<E: Engine, B: InputBackend> Update<(InputEvent<B>, ScreenId)> for App<E> {
+impl<E: Engine, B: InputBackend> Update<(InputEvent<B>, ScreenId)> for Charlie<E> {
     fn update (&mut self, (event, screen_id): (InputEvent<B>, ScreenId)) -> StdResult<()> {
         handle_input(self, event, screen_id)
     }
 }
 
 fn handle_input <E: Engine, B: InputBackend> (
-    state: &mut App<E>,
+    state: &mut Charlie<E>,
     event: InputEvent<B>,
     screen_id: ScreenId
 ) -> StdResult<()> {
@@ -58,7 +58,7 @@ fn handle_input <E: Engine, B: InputBackend> (
 pub struct Input<E: Engine> {
     logger:      Logger,
     handle:      DisplayHandle,
-    seat:        SeatState<App<E>>,
+    seat:        SeatState<Charlie<E>>,
     data_device: DataDeviceState,
     /// State of the mouse pointer(s)
     pub pointers:  Vec<Pointer<E>>,
@@ -73,14 +73,14 @@ impl<E: Engine> Input<E> {
             logger:      logger.clone(),
             handle:      handle.clone(),
             seat:        SeatState::new(),
-            data_device: DataDeviceState::new::<App<E>, _>(&handle, logger.clone()),
+            data_device: DataDeviceState::new::<Charlie<E>, _>(&handle, logger.clone()),
             pointers:    vec![],
             keyboards:   vec![],
         })
     }
 
     pub fn seat_add (&mut self, name: impl Into<String>, pointer: Gles2Texture)
-        -> Result<Seat<App<E>>, Box<dyn Error>>
+        -> Result<Seat<Charlie<E>>, Box<dyn Error>>
     {
         let mut seat = self.seat.new_wl_seat(&self.handle, name.into(), self.logger.clone());
         self.pointers.push(
@@ -95,7 +95,7 @@ impl<E: Engine> Input<E> {
 
 }
 
-impl<E: Engine> SeatHandler for App<E> {
+impl<E: Engine> SeatHandler for Charlie<E> {
     type KeyboardFocus = WlSurface;
     type PointerFocus  = WlSurface;
 
@@ -114,15 +114,15 @@ impl<E: Engine> SeatHandler for App<E> {
     }
 }
 
-impl<E: Engine> DataDeviceHandler for App<E> {
+impl<E: Engine> DataDeviceHandler for Charlie<E> {
     fn data_device_state(&self) -> &DataDeviceState {
         &self.input.data_device
     }
 }
 
-impl<E: Engine> ClientDndGrabHandler for App<E> {}
+impl<E: Engine> ClientDndGrabHandler for Charlie<E> {}
 
-impl<E: Engine> ServerDndGrabHandler for App<E> {}
+impl<E: Engine> ServerDndGrabHandler for Charlie<E> {}
 
 /// Possible results of a keyboard action
 #[derive(Debug)]
@@ -145,13 +145,13 @@ enum KeyAction {
 
 pub struct Keyboard<E: Engine> {
     logger:  Logger,
-    handle:  KeyboardHandle<App<E>>,
+    handle:  KeyboardHandle<Charlie<E>>,
     hotkeys: Vec<u32>,
 }
 
 impl<E: Engine> Keyboard<E> {
 
-    pub fn new (logger: &Logger, handle: KeyboardHandle<App<E>>) -> Self {
+    pub fn new (logger: &Logger, handle: KeyboardHandle<Charlie<E>>) -> Self {
         Self {
             logger: logger.clone(),
             handle,
@@ -160,7 +160,7 @@ impl<E: Engine> Keyboard<E> {
     }
 
     pub fn on_key <B: InputBackend> (
-        state: &mut App<E>,
+        state: &mut Charlie<E>,
         index: usize,
         event: B::KeyboardKeyEvent,
         screen_id: usize
@@ -230,7 +230,7 @@ impl<E: Engine> Keyboard<E> {
 
 pub struct Pointer<E: Engine> {
     logger:        Logger,
-    pub handle:    PointerHandle<App<E>>,
+    pub handle:    PointerHandle<Charlie<E>>,
     pub texture:   Gles2Texture,
     status:        Arc<Mutex<Status>>,
     location:      Point<f64, Logical>,
@@ -242,7 +242,7 @@ impl<E: Engine> Pointer<E> {
 
     pub fn new (
         logger:  &Logger,
-        handle:  PointerHandle<App<E>>,
+        handle:  PointerHandle<Charlie<E>>,
         texture: Gles2Texture
     ) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
@@ -304,7 +304,7 @@ impl<E: Engine> Pointer<E> {
     }
 
     pub fn on_move_relative<B: InputBackend>(
-        state: &mut App<E>,
+        state: &mut Charlie<E>,
         index: usize,
         event: B::PointerMotionEvent,
         screen_id: usize
@@ -314,7 +314,7 @@ impl<E: Engine> Pointer<E> {
     }
 
     pub fn on_move_absolute<B: InputBackend>(
-        state: &mut App<E>,
+        state: &mut Charlie<E>,
         index: usize,
         event: B::PointerMotionAbsoluteEvent,
         screen_id: usize
@@ -344,7 +344,7 @@ impl<E: Engine> Pointer<E> {
     }
 
     pub fn on_button<B: InputBackend>(
-        state: &mut App<E>,
+        state: &mut Charlie<E>,
         index: usize,
         event: B::PointerButtonEvent,
         screen_id: usize
@@ -393,7 +393,7 @@ impl<E: Engine> Pointer<E> {
     }
 
     pub fn on_axis<B: InputBackend>(
-        state: &mut App<E>,
+        state: &mut Charlie<E>,
         index: usize,
         event: B::PointerAxisEvent,
         screen_id: usize

@@ -21,6 +21,7 @@ xcursor = "0.3.3"
 xkbcommon = "0.4.0"
 deno_core = "0.165.0"
 wayland-egl = "0.30.0"
+wayland-delegate = { path = "./wayland-delegate" }
 
 [dependencies.smithay]
 path = "./smithay"

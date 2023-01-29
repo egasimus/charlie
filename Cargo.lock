@@ -176,6 +176,7 @@ dependencies = [
  "slog-term",
  "smithay",
  "thiserror",
+ "wayland-delegate",
  "wayland-egl",
  "x11rb",
  "xcursor",
@@ -2048,6 +2049,15 @@ dependencies = [
  "nix 0.24.3",
  "wayland-client",
  "xcursor",
+]
+
+[[package]]
+name = "wayland-delegate"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

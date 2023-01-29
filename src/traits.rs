@@ -16,24 +16,6 @@ pub trait Render<'r, RenderParams> {
     fn render (&'r mut self, context: &'r mut RenderParams) -> StdResult<()>;
 }
 
-pub trait Widget {
-
-    fn new <E: Engine> (
-        logger:  &Logger,
-        display: &DisplayHandle,
-        events:  &LoopHandle<'static, App<E>>
-    ) -> StdResult<Self> where Self: Sized;
-
-    fn render (
-        &mut self,
-        renderer: &mut Gles2Renderer,
-        output:   &Output,
-        size:     &Size<i32, Physical>,
-        screen:   ScreenId
-    ) -> StdResult<()>;
-
-}
-
 ///// All types that implement Render + Update are widgets
 //impl<'a, U, R, W> Widget<'a, U, R> for W where W: Render<'a, R> + Update<U> {}
 
@@ -47,13 +29,13 @@ pub trait Engine: Outputs + Inputs + 'static {
     /// Obtain a mutable reference to the renderer.
     fn renderer (&self)
         -> RefMut<Gles2Renderer>;
-    fn update <U: EngineApp<Self> + 'static> (app: &mut U)
+    fn update <U: App<Self> + 'static> (app: &mut U)
         -> StdResult<()> where Self: Sized;
-    fn render <R: EngineApp<Self> + 'static> (app: &mut R)
+    fn render <R: App<Self> + 'static> (app: &mut R)
         -> StdResult<()> where Self: Sized;
 }
 
-pub trait EngineApp<E: Engine> {
+pub trait App<E: Engine> {
 
     fn engine (&mut self) -> &mut E;
 

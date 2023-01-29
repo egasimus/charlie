@@ -14,7 +14,7 @@ use smithay::{
 };
 
 /// Contains the compositor state.
-pub struct App<E: Engine> {
+pub struct Charlie<E: Engine> {
     pub logger:  Logger,
     pub display: Rc<RefCell<Display<Self>>>,
     pub events:  Rc<RefCell<EventLoop<'static, Self>>>,
@@ -28,7 +28,7 @@ pub struct App<E: Engine> {
     pub engine:  E,
 }
 
-impl<E: Engine> App<E> {
+impl<E: Engine> Charlie<E> {
 
     pub fn new (logger: Logger) -> StdResult<Self> {
 
@@ -154,7 +154,7 @@ impl<E: Engine> App<E> {
 
 }
 
-impl<E: Engine> EngineApp<E> for App<E> {
+impl<E: Engine> App<E> for Charlie<E> {
 
     fn engine (&mut self) -> &mut E {
         &mut self.engine
