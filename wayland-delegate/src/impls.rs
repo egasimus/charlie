@@ -119,15 +119,47 @@ pub fn delegate_compositor (input: TokenStream) -> TokenStream {
     let ItemImpl { generics: g, self_ty: s, .. } = parse(input.clone()).unwrap();
     let t = quote! { CompositorState };
     delegator(input, &[
-        delegate_global(&g, &s, &t, quote! { WlCompositor }, quote! { () }),
-        delegate_global(&g, &s, &t, quote! { WlSubcompositor }, quote! { () }),
+        delegate_global(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_compositor::WlCompositor
+        }, quote! {
+            ()
+        }),
+        delegate_global(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_subcompositor::WlSubcompositor
+        }, quote! {
+            ()
+        }),
     ], &[
-        delegate(&g, &s, &t, quote! { WlCompositor }, quote! { () }),
-        delegate(&g, &s, &t, quote! { WlSurface }, quote! { SurfaceUserData }),
-        delegate(&g, &s, &t, quote! { WlRegion }, quote! { RegionUserData }),
-        delegate(&g, &s, &t, quote! { WlCallback }, quote! { () }),
-        delegate(&g, &s, &t, quote! { WlSubcompositor }, quote! { () }),
-        delegate(&g, &s, &t, quote! { WlSubsurface }, quote! { SubsurfaceUserData }),
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_compositor::WlCompositor
+        }, quote! {
+            ()
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_surface::WlSurface
+        }, quote! {
+            smithay::wayland::compositor::SurfaceUserData
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_region::WlRegion
+        }, quote! {
+            smithay::wayland::compositor::RegionUserData
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_callback::WlCallback
+        }, quote! {
+            ()
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_subcompositor::WlSubcompositor
+        }, quote! {
+            ()
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_subsurface::WlSubsurface
+        }, quote! {
+            smithay::wayland::compositor::SubsurfaceUserData
+        }),
     ])
 }
 
@@ -135,13 +167,37 @@ pub fn delegate_xdg_shell (input: TokenStream) -> TokenStream {
     let ItemImpl { generics: g, self_ty: s, .. } = parse(input.clone()).unwrap();
     let t = quote! { XdgShellState };
     delegator(input, &[
-        delegate_global(&g, &s, &t, quote! { XdgWmBase }, quote! { () }),
+        delegate_global(&g, &s, &t, quote! {
+            wayland_protocols::xdg::shell::server::xdg_wm_base::XdgWmBase
+        }, quote! {
+            ()
+        }),
     ], &[
-        delegate(&g, &s, &t, quote! { XdgWmBase }, quote! { XdgWmBaseUserData }),
-        delegate(&g, &s, &t, quote! { XdgPositioner }, quote! { XdgPositionerUserData }),
-        delegate(&g, &s, &t, quote! { XdgPopup }, quote! { XdgShellSurfaceUserData }),
-        delegate(&g, &s, &t, quote! { XdgSurface }, quote! { XdgSurfaceUserData }),
-        delegate(&g, &s, &t, quote! { XdgToplevel }, quote! { XdgShellSurfaceUserData }),
+        delegate(&g, &s, &t, quote! {
+            wayland_protocols::xdg::shell::server::xdg_wm_base::XdgWmBase
+        }, quote! {
+            smithay::wayland::shell::xdg::XdgWmBaseUserData
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_protocols::xdg::shell::server::xdg_positioner::XdgPositioner
+        }, quote! {
+            smithay::wayland::shell::xdg::XdgPositionerUserData
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_protocols::xdg::shell::server::xdg_popup::XdgPopup
+        }, quote! {
+            smithay::wayland::shell::xdg::XdgShellSurfaceUserData
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_protocols::xdg::shell::server::xdg_surface::XdgSurface
+        }, quote! {
+            smithay::wayland::shell::xdg::XdgSurfaceUserData
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_protocols::xdg::shell::server::xdg_toplevel::XdgToplevel
+        }, quote! {
+            smithay::wayland::shell::xdg::XdgShellSurfaceUserData
+        }),
     ])
 }
 
@@ -225,12 +281,32 @@ pub fn delegate_seat (input: TokenStream) -> TokenStream {
     let ItemImpl { generics: g, self_ty: s, .. } = parse(input.clone()).unwrap();
     let t = quote! { SeatState<#s> };
     delegator(input, &[
-        delegate_global(&g, &s, &t, quote! { WlSeat }, quote! { SeatGlobalData<#s> }),
+        delegate_global(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_seat::WlSeat
+        }, quote! {
+            smithay::wayland::seat::SeatGlobalData<#s>
+        }),
     ], &[
-        delegate(&g, &s, &t, quote! { WlSeat }, quote! { SeatUserData<#s> }),
-        delegate(&g, &s, &t, quote! { WlPointer }, quote! { PointerUserData<#s> }),
-        delegate(&g, &s, &t, quote! { WlKeyboard }, quote! { KeyboardUserData<#s> }),
-        delegate(&g, &s, &t, quote! { WlTouch }, quote! { TouchUserData }),
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_seat::WlSeat
+        }, quote! {
+            smithay::wayland::seat::SeatUserData<#s>
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_pointer::WlPointer
+        }, quote! {
+            smithay::wayland::seat::PointerUserData<#s>
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_keyboard::WlKeyboard
+        }, quote! {
+            smithay::wayland::seat::KeyboardUserData<#s>
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_touch::WlTouch
+        }, quote! {
+            smithay::wayland::seat::TouchUserData
+        }),
     ])
 }
 
@@ -238,11 +314,27 @@ pub fn delegate_data_device (input: TokenStream) -> TokenStream {
     let ItemImpl { generics: g, self_ty: s, .. } = parse(input.clone()).unwrap();
     let t = quote! { DataDeviceState };
     delegator(input, &[
-        delegate_global(&g, &s, &t, quote! { WlDataDeviceManager }, quote! { () })
+        delegate_global(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_data_device_manager::WlDataDeviceManager
+        }, quote! {
+            ()
+        })
     ], &[
-        delegate(&g, &s, &t, quote! { WlDataDeviceManager }, quote! { () }),
-        delegate(&g, &s, &t, quote! { WlDataDevice }, quote! { DataDeviceUserData }),
-        delegate(&g, &s, &t, quote! { WlDataSource }, quote! { DataSourceUserData })
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_data_device_manager::WlDataDeviceManager
+        }, quote! {
+            ()
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_data_device::WlDataDevice
+        }, quote! {
+            smithay::wayland::data_device::DataDeviceUserData
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_data_source::WlDataSource
+        }, quote! {
+            smithay::wayland::data_device::DataSourceUserData
+        })
     ])
 }
 

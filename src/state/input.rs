@@ -25,10 +25,6 @@ use smithay::{
     wayland::input_method::InputMethodSeat
 };
 
-smithay::delegate_seat!(@<E: Engine> Charlie<E>);
-
-smithay::delegate_data_device!(@<E: Engine> Charlie<E>);
-
 impl<E: Engine, B: InputBackend> Update<(InputEvent<B>, ScreenId)> for Charlie<E> {
     fn update (&mut self, (event, screen_id): (InputEvent<B>, ScreenId)) -> StdResult<()> {
         handle_input(self, event, screen_id)
@@ -95,6 +91,7 @@ impl<E: Engine> Input<E> {
 
 }
 
+#[delegate_seat]
 impl<E: Engine> SeatHandler for Charlie<E> {
     type KeyboardFocus = WlSurface;
     type PointerFocus  = WlSurface;
@@ -114,6 +111,7 @@ impl<E: Engine> SeatHandler for Charlie<E> {
     }
 }
 
+#[delegate_data_device]
 impl<E: Engine> DataDeviceHandler for Charlie<E> {
     fn data_device_state(&self) -> &DataDeviceState {
         &self.input.data_device

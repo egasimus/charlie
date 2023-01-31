@@ -1,9 +1,5 @@
 use super::prelude::*;
 
-smithay::delegate_compositor!(@<E: Engine> Charlie<E>);
-
-smithay::delegate_xdg_shell!(@<E: Engine> Charlie<E>);
-
 pub struct Desktop {
     logger: Logger,
     clock:  Clock<Monotonic>,
@@ -76,6 +72,7 @@ impl Desktop {
 
 }
 
+#[delegate_compositor]
 impl<E: Engine> CompositorHandler for Charlie<E> {
 
     fn compositor_state (&mut self) -> &mut CompositorState {
@@ -131,6 +128,7 @@ impl<E: Engine> CompositorHandler for Charlie<E> {
 
 }
 
+#[delegate_xdg_shell]
 impl<E: Engine> XdgShellHandler for Charlie<E> {
 
     fn xdg_shell_state (&mut self) -> &mut XdgShellState {
