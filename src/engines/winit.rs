@@ -89,7 +89,7 @@ impl Engine for WinitEngine {
         // Init dmabuf support
         renderer.bind_wl_display(&display)?;
         let mut dmabuf_state = DmabufState::new();
-        let dmabuf_global = dmabuf_state.create_global::<App<Self>, _>(
+        let dmabuf_global = dmabuf_state.create_global::<Box<dyn App<Self>>, _>(
             display,
             renderer.dmabuf_formats().cloned().collect::<Vec<_>>(),
             logger.clone(),
@@ -97,8 +97,8 @@ impl Engine for WinitEngine {
 
         Ok(Self {
             logger:        logger.clone(),
-            shm:           ShmState::new::<App<Self>, _>(&display, vec![], logger.clone()),
-            out_manager:   OutputManagerState::new_with_xdg_output::<App<Self>>(&display),
+            shm:           ShmState::new::<Box<dyn App<Self>>, _>(&display, vec![], logger.clone()),
+            out_manager:   OutputManagerState::new_with_xdg_output::<Box<dyn App<Self>>>(&display),
             running:       Arc::new(AtomicBool::new(true)),
             started:       Cell::new(None),
             winit_events:  Rc::new(RefCell::new(winit_events)),
@@ -354,23 +354,25 @@ impl Outputs for WinitEngine {
     }
 }
 
-impl BufferHandler for dyn App<WinitEngine> {
+#[delegate_output]
+impl BufferHandler for Box<dyn App<WinitEngine>> {
     fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
 }
 
-impl ShmHandler for dyn App<WinitEngine> {
+#[delegate_shm]
+impl ShmHandler for Box<dyn App<WinitEngine>> {
     fn shm_state(&self) -> &ShmState {
         &self.engine().shm
     }
 }
 
 #[delegate_dmabuf]
-impl DmabufHandler for dyn App<WinitEngine> {
+impl DmabufHandler for Box<dyn App<WinitEngine>> {
     fn dmabuf_state(&mut self) -> &mut DmabufState {
-        &mut self.engine.dmabuf_state
+        &mut self.engine_mut().dmabuf_state
     }
     fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf) -> Result<(), ImportError> {
-        self.engine.renderer()
+        self.engine().renderer()
             .import_dmabuf(&dmabuf, None)
             .map(|_| ())
             .map_err(|_| ImportError::Failed)

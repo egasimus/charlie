@@ -156,7 +156,11 @@ impl<E: Engine> Charlie<E> {
 
 impl<E: Engine> App<E> for Charlie<E> {
 
-    fn engine (&mut self) -> &mut E {
+    fn engine (&self) -> &E {
+        &self.engine
+    }
+
+    fn engine_mut (&mut self) -> &mut E {
         &mut self.engine
     }
 

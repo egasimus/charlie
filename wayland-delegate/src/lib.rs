@@ -7,7 +7,7 @@ use crate::impls::{delegate, delegate_global};
 macro_rules! delegator {
     ($name:ident) => {
         #[proc_macro_attribute]
-        pub fn $name (input: TokenStream, _: TokenStream) -> TokenStream {
+        pub fn $name (_: TokenStream, input: TokenStream) -> TokenStream {
             crate::impls::$name(input.into()).into()
         }
     }
@@ -17,11 +17,11 @@ delegator!(delegate_output);
 
 delegator!(delegate_compositor);
 
-delegator!(delegate_xdg_shell);
-
 delegator!(delegate_shm);
 
 delegator!(delegate_dmabuf);
+
+delegator!(delegate_xdg_shell);
 
 delegator!(delegate_fractional_scale);
 

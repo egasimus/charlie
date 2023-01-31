@@ -37,7 +37,9 @@ pub trait Engine: Outputs + Inputs + 'static {
 
 pub trait App<E: Engine> {
 
-    fn engine (&mut self) -> &mut E;
+    fn engine (&self) -> &E;
+
+    fn engine_mut (&mut self) -> &mut E;
 
     fn render (
         &mut self,

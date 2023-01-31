@@ -1,12 +1,17 @@
-use proc_macro2::TokenStream;
-use quote::{quote, format_ident};
+use proc_macro2::{TokenStream, Span};
+use quote::{quote_spanned, format_ident};
 use syn::{parse2 as parse, ItemImpl, Generics, Type};
 
+macro_rules! quote {
+    ($($tt:tt)*) => { quote_spanned! { Span::mixed_site() => $($tt)* } };
+}
+
 /// Composes the delegation implementations
-fn delegator (globals: &[TokenStream], locals: &[TokenStream]) -> TokenStream {
+fn delegator (input: TokenStream, globals: &[TokenStream], locals: &[TokenStream]) -> TokenStream {
     quote! {
         #(#globals)*
         #(#locals)*
+        #input
     }
 }
 
@@ -15,20 +20,20 @@ pub fn delegate (
     source: &Box<Type>,
     target: &TokenStream,
     interface: TokenStream,
-    udata: TokenStream,
+    data: TokenStream,
 ) -> TokenStream {
     quote! {
-        impl #generics wayland_server::Dispatch<#interface, #udata> for #source {
+        impl #generics wayland_server::Dispatch<#interface, #data> for #source {
             fn request (
                 state:     &mut Self,
                 client:    &wayland_server::Client,
-                resource:  &$interface,
-                request:   <$interface as wayland_server::Resource>::Request,
-                data:      &$udata,
+                resource:  &#interface,
+                request:   <#interface as wayland_server::Resource>::Request,
+                data:      &#data,
                 dhandle:   &wayland_server::DisplayHandle,
                 data_init: &mut wayland_server::DataInit<'_, Self>,
             ) {
-                <$target as wayland_server::Dispatch<$interface, $udata, Self>>::request(
+                <#target as wayland_server::Dispatch<#interface, #data, Self>>::request(
                     state, client, resource, request, data, dhandle, data_init
                 )
             }
@@ -36,9 +41,9 @@ pub fn delegate (
                 state:    &mut Self,
                 client:   wayland_server::backend::ClientId,
                 resource: wayland_server::backend::ObjectId,
-                data:     &$udata
+                data:     &#data
             ) {
-                <$target as wayland_server::Dispatch<$interface, $udata, Self>>::destroyed(
+                <#target as wayland_server::Dispatch<#interface, #data, Self>>::destroyed(
                     state, client, resource, data
                 )
             }
@@ -51,27 +56,27 @@ pub fn delegate_global (
     source: &Box<Type>,
     target: &TokenStream,
     interface: TokenStream,
-    udata: TokenStream,
+    data: TokenStream,
 ) -> TokenStream {
     quote! {
-        impl #generics wayland_server::GlobalDispatch<#interface, #udata> for #source {
+        impl #generics wayland_server::GlobalDispatch<#interface, #data> for #source {
             fn bind (
                 state:       &mut Self,
                 dhandle:     &wayland_server::DisplayHandle,
                 client:      &wayland_server::Client,
-                resource:    wayland_server::New<$interface>,
-                global_data: &$udata,
+                resource:    wayland_server::New<#interface>,
+                global_data: &#data,
                 data_init:   &mut wayland_server::DataInit<'_, Self>,
             ) {
-                <$target as wayland_server::GlobalDispatch<$interface, $udata, Self>>::bind(
+                <#target as wayland_server::GlobalDispatch<#interface, #data, Self>>::bind(
                     state, dhandle, client, resource, global_data, data_init
                 )
             }
             fn can_view (
                 client:      wayland_server::Client,
-                global_data: &$udata
+                global_data: &#data
             ) -> bool {
-                <$target as wayland_server::GlobalDispatch<$interface, $udata, Self>>::can_view(
+                <#target as wayland_server::GlobalDispatch<#interface, #data, Self>>::can_view(
                     client, global_data
                 )
             }
@@ -80,22 +85,40 @@ pub fn delegate_global (
 }
 
 pub fn delegate_output (input: TokenStream) -> TokenStream {
-    let ItemImpl { generics: g, self_ty: s, .. } = parse(input).unwrap();
+    let ItemImpl { generics: g, self_ty: s, .. } = parse(input.clone()).unwrap();
     let t = quote! { OutputManagerState };
-    delegator(&[
-        delegate_global(&g, &s, &t, quote! { WlOutput }, quote! { WlOutputData }),
-        delegate_global(&g, &s, &t, quote! { ZxdgOutputManagerV1 }, quote! { () })
+    delegator(input, &[
+        delegate_global(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_output::WlOutput
+        }, quote! {
+            smithay::wayland::output::WlOutputData
+        }),
+        delegate_global(&g, &s, &t, quote! {
+            wayland_protocols::xdg::xdg_output::zv1::server::zxdg_output_manager_v1::ZxdgOutputManagerV1
+        }, quote! { () })
     ], &[
-        delegate(&g, &s, &t, quote! { WlOutput }, quote! { OutputUserData }),
-        delegate(&g, &s, &t, quote! { ZxdgOutputV1 }, quote! { XdgOutputUserData }),
-        delegate(&g, &s, &t, quote! { ZxdgOutputManagerV1 }, quote! { () })
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_output::WlOutput
+        }, quote! {
+            smithay::wayland::output::OutputUserData
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_protocols::xdg::xdg_output::zv1::server::zxdg_output_v1::ZxdgOutputV1
+        }, quote! {
+            smithay::wayland::output::XdgOutputUserData
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_protocols::xdg::xdg_output::zv1::server::zxdg_output_manager_v1::ZxdgOutputManagerV1
+        }, quote! {
+            ()
+        })
     ])
 }
 
 pub fn delegate_compositor (input: TokenStream) -> TokenStream {
-    let ItemImpl { generics: g, self_ty: s, .. } = parse(input).unwrap();
+    let ItemImpl { generics: g, self_ty: s, .. } = parse(input.clone()).unwrap();
     let t = quote! { CompositorState };
-    delegator(&[
+    delegator(input, &[
         delegate_global(&g, &s, &t, quote! { WlCompositor }, quote! { () }),
         delegate_global(&g, &s, &t, quote! { WlSubcompositor }, quote! { () }),
     ], &[
@@ -109,9 +132,9 @@ pub fn delegate_compositor (input: TokenStream) -> TokenStream {
 }
 
 pub fn delegate_xdg_shell (input: TokenStream) -> TokenStream {
-    let ItemImpl { generics: g, self_ty: s, .. } = parse(input).unwrap();
+    let ItemImpl { generics: g, self_ty: s, .. } = parse(input.clone()).unwrap();
     let t = quote! { XdgShellState };
-    delegator(&[
+    delegator(input, &[
         delegate_global(&g, &s, &t, quote! { XdgWmBase }, quote! { () }),
     ], &[
         delegate(&g, &s, &t, quote! { XdgWmBase }, quote! { XdgWmBaseUserData }),
@@ -123,33 +146,61 @@ pub fn delegate_xdg_shell (input: TokenStream) -> TokenStream {
 }
 
 pub fn delegate_shm (input: TokenStream) -> TokenStream {
-    let ItemImpl { generics: g, self_ty: s, .. } = parse(input).unwrap();
+    let ItemImpl { generics: g, self_ty: s, .. } = parse(input.clone()).unwrap();
     let t = quote! { ShmState };
-    delegator(&[
-        delegate_global(&g, &s, &t, quote! { WlShm }, quote! { () }),
+    delegator(input, &[
+        delegate_global(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_shm::WlShm
+        }, quote! {
+            ()
+        }),
     ], &[
-        delegate(&g, &s, &t, quote! { WlShm }, quote! { () }),
-        delegate(&g, &s, &t, quote! { WlShmPool }, quote! { ShmPoolUserData }),
-        delegate(&g, &s, &t, quote! { WlBuffer }, quote! { ShmBuferUserData }),
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_shm::WlShm
+        }, quote! {
+            ()
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_shm_pool::WlShmPool
+        }, quote! {
+            smithay::wayland::shm::ShmPoolUserData
+        }),
+        delegate(&g, &s, &t, quote! {
+            WlBuffer
+        }, quote! {
+            smithay::wayland::shm::ShmBufferUserData
+        }),
     ])
 }
 
 pub fn delegate_dmabuf (input: TokenStream) -> TokenStream {
-    let ItemImpl { generics: g, self_ty: s, .. } = parse(input).unwrap();
+    let ItemImpl { generics: g, self_ty: s, .. } = parse(input.clone()).unwrap();
     let t = quote! { DmabufState };
-    delegator(&[
-        delegate_global(&g, &s, &t, quote! { ZwpLinuxDmabufV1 }, quote! { DmabufGlobalData }),
+    delegator(input, &[
+        delegate_global(&g, &s, &t, quote! {
+            wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1
+        }, quote! {
+            smithay::wayland::dmabuf::DmabufGlobalData
+        }),
     ], &[
-        delegate(&g, &s, &t, quote! { ZwpLinuxDmabufV1 }, quote! { DmabufData }),
-        delegate(&g, &s, &t, quote! { ZwpLinuxBufferParamsV1 }, quote! { DmabufParamsData }),
+        delegate(&g, &s, &t, quote! {
+            wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1
+        }, quote! {
+            smithay::wayland::dmabuf::DmabufData
+        }),
+        delegate(&g, &s, &t, quote! {
+            wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1
+        }, quote! {
+            smithay::wayland::dmabuf::DmabufParamsData
+        }),
         delegate(&g, &s, &t, quote! { WlBuffer }, quote! { Dmabuf }),
     ])
 }
 
 pub fn delegate_fractional_scale (input: TokenStream) -> TokenStream {
-    let ItemImpl { generics: g, self_ty: s, .. } = parse(input).unwrap();
+    let ItemImpl { generics: g, self_ty: s, .. } = parse(input.clone()).unwrap();
     let t = quote! { FractionalScaleManagerState };
-    delegator(&[
+    delegator(input, &[
         delegate_global(&g, &s, &t, quote! { WpFractionalScaleManagerV1 }, quote! { Logger }),
     ], &[
         delegate(&g, &s, &t, quote! { WpFractionalScaleManagerV1 }, quote! { Logger }),
@@ -158,9 +209,9 @@ pub fn delegate_fractional_scale (input: TokenStream) -> TokenStream {
 }
 
 pub fn delegate_presentation (input: TokenStream) -> TokenStream {
-    let ItemImpl { generics: g, self_ty: s, .. } = parse(input).unwrap();
+    let ItemImpl { generics: g, self_ty: s, .. } = parse(input.clone()).unwrap();
     let t = quote! { PresentationState };
-    delegator(&[
+    delegator(input, &[
         delegate_global(&g, &s, &t, quote! { WpPresentation }, quote! { u32 }),
     ], &[
         delegate(&g, &s, &t, quote! { WpPresentation }, quote! { u32 }),
@@ -171,9 +222,9 @@ pub fn delegate_presentation (input: TokenStream) -> TokenStream {
 }
 
 pub fn delegate_seat (input: TokenStream) -> TokenStream {
-    let ItemImpl { generics: g, self_ty: s, .. } = parse(input).unwrap();
+    let ItemImpl { generics: g, self_ty: s, .. } = parse(input.clone()).unwrap();
     let t = quote! { SeatState<#s> };
-    delegator(&[
+    delegator(input, &[
         delegate_global(&g, &s, &t, quote! { WlSeat }, quote! { SeatGlobalData<#s> }),
     ], &[
         delegate(&g, &s, &t, quote! { WlSeat }, quote! { SeatUserData<#s> }),
@@ -184,9 +235,9 @@ pub fn delegate_seat (input: TokenStream) -> TokenStream {
 }
 
 pub fn delegate_data_device (input: TokenStream) -> TokenStream {
-    let ItemImpl { generics: g, self_ty: s, .. } = parse(input).unwrap();
+    let ItemImpl { generics: g, self_ty: s, .. } = parse(input.clone()).unwrap();
     let t = quote! { DataDeviceState };
-    delegator(&[
+    delegator(input, &[
         delegate_global(&g, &s, &t, quote! { WlDataDeviceManager }, quote! { () })
     ], &[
         delegate(&g, &s, &t, quote! { WlDataDeviceManager }, quote! { () }),
@@ -196,67 +247,67 @@ pub fn delegate_data_device (input: TokenStream) -> TokenStream {
 }
 
 pub fn delegate_keyboard_shortcuts_inhibit (input: TokenStream) -> TokenStream {
-    delegator(&[
+    delegator(input, &[
     ], &[
     ])
 }
 
 pub fn delegate_layer_shell (input: TokenStream) -> TokenStream {
-    delegator(&[
+    delegator(input, &[
     ], &[
     ])
 }
 
 pub fn delegate_viewporter (input: TokenStream) -> TokenStream {
-    delegator(&[
+    delegator(input, &[
     ], &[
     ])
 }
 
 pub fn delegate_primary_selection (input: TokenStream) -> TokenStream {
-    delegator(&[
+    delegator(input, &[
     ], &[
     ])
 }
 
 pub fn delegate_input_method_manager (input: TokenStream) -> TokenStream {
-    delegator(&[
+    delegator(input, &[
     ], &[
     ])
 }
 
 pub fn delegate_tablet_manager (input: TokenStream) -> TokenStream {
-    delegator(&[
+    delegator(input, &[
     ], &[
     ])
 }
 
 pub fn delegate_text_input_manager (input: TokenStream) -> TokenStream {
-    delegator(&[
+    delegator(input, &[
     ], &[
     ])
 }
 
 pub fn delegate_virtual_keyboard_manager (input: TokenStream) -> TokenStream {
-    delegator(&[
+    delegator(input, &[
     ], &[
     ])
 }
 
 pub fn delegate_xdg_activation (input: TokenStream) -> TokenStream {
-    delegator(&[
+    delegator(input, &[
     ], &[
     ])
 }
 
 pub fn delegate_xdg_decoration (input: TokenStream) -> TokenStream {
-    delegator(&[
+    delegator(input, &[
     ], &[
     ])
 }
 
 pub fn delegate_kde_decoration (input: TokenStream) -> TokenStream {
-    delegator(&[
+    delegator(input, &[
     ], &[
     ])
 }

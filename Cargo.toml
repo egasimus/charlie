@@ -23,6 +23,9 @@ deno_core = "0.165.0"
 wayland-egl = "0.30.0"
 wayland-delegate = { path = "./wayland-delegate" }
 
+wayland-server = "0.30.0"
+wayland-protocols = { version = "0.30.0", features = ["unstable", "staging", "server"] }
+
 [dependencies.smithay]
 path = "./smithay"
 default-features = false

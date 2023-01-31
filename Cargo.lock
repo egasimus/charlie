@@ -178,6 +178,8 @@ dependencies = [
  "thiserror",
  "wayland-delegate",
  "wayland-egl",
+ "wayland-protocols 0.30.0",
+ "wayland-server",
  "x11rb",
  "xcursor",
  "xkbcommon 0.4.1",
@@ -2057,7 +2059,9 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "smithay",
  "syn",
+ "wayland-server",
 ]
 
 [[package]]
