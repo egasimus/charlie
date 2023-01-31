@@ -21,7 +21,7 @@ pub trait Render<'r, RenderParams> {
 
 pub trait Engine: Outputs + Inputs + 'static {
     /// Create a new instance of this engine
-    fn new (logger: &Logger, display: &DisplayHandle)
+    fn new <T: App<Self>> (logger: &Logger, display: &DisplayHandle)
         -> Result<Self, Box<dyn Error>> where Self: Sized;
     /// Obtain a copy of the logger.
     fn logger (&self)
@@ -33,6 +33,10 @@ pub trait Engine: Outputs + Inputs + 'static {
         -> StdResult<()> where Self: Sized;
     fn render <R: App<Self> + 'static> (app: &mut R)
         -> StdResult<()> where Self: Sized;
+
+    fn dmabuf_state (&mut self) -> &mut smithay::wayland::dmabuf::DmabufState;
+
+    fn shm_state (&self) -> &smithay::wayland::shm::ShmState;
 }
 
 pub trait App<E: Engine> {

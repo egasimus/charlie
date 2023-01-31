@@ -86,7 +86,7 @@ pub fn delegate_global (
 
 pub fn delegate_output (input: TokenStream) -> TokenStream {
     let ItemImpl { generics: g, self_ty: s, .. } = parse(input.clone()).unwrap();
-    let t = quote! { OutputManagerState };
+    let t = quote! { smithay::wayland::output::OutputManagerState };
     delegator(input, &[
         delegate_global(&g, &s, &t, quote! {
             wayland_server::protocol::wl_output::WlOutput
@@ -203,7 +203,7 @@ pub fn delegate_xdg_shell (input: TokenStream) -> TokenStream {
 
 pub fn delegate_shm (input: TokenStream) -> TokenStream {
     let ItemImpl { generics: g, self_ty: s, .. } = parse(input.clone()).unwrap();
-    let t = quote! { ShmState };
+    let t = quote! { smithay::wayland::shm::ShmState };
     delegator(input, &[
         delegate_global(&g, &s, &t, quote! {
             wayland_server::protocol::wl_shm::WlShm
@@ -222,7 +222,7 @@ pub fn delegate_shm (input: TokenStream) -> TokenStream {
             smithay::wayland::shm::ShmPoolUserData
         }),
         delegate(&g, &s, &t, quote! {
-            WlBuffer
+            wayland_server::protocol::wl_buffer::WlBuffer
         }, quote! {
             smithay::wayland::shm::ShmBufferUserData
         }),
@@ -231,7 +231,9 @@ pub fn delegate_shm (input: TokenStream) -> TokenStream {
 
 pub fn delegate_dmabuf (input: TokenStream) -> TokenStream {
     let ItemImpl { generics: g, self_ty: s, .. } = parse(input.clone()).unwrap();
-    let t = quote! { DmabufState };
+    let t = quote! {
+        smithay::wayland::dmabuf::DmabufState
+    };
     delegator(input, &[
         delegate_global(&g, &s, &t, quote! {
             wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1
@@ -249,7 +251,11 @@ pub fn delegate_dmabuf (input: TokenStream) -> TokenStream {
         }, quote! {
             smithay::wayland::dmabuf::DmabufParamsData
         }),
-        delegate(&g, &s, &t, quote! { WlBuffer }, quote! { Dmabuf }),
+        delegate(&g, &s, &t, quote! {
+            wayland_server::protocol::wl_buffer::WlBuffer
+        }, quote! {
+            smithay::backend::allocator::dmabuf::Dmabuf
+        }),
     ])
 }
 

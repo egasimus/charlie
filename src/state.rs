@@ -39,7 +39,7 @@ impl<E: Engine> Charlie<E> {
         let display = Display::new()?;
 
         // Create the engine
-        let engine = E::new(&logger, &display.handle())?;
+        let engine = E::new::<Self>(&logger, &display.handle())?;
 
         // Init xwayland
         crate::state::xwayland::init_xwayland(
@@ -216,3 +216,30 @@ impl ClientData for ClientState {
     fn initialized (&self, _client_id: ClientId) {}
     fn disconnected (&self, _client_id: ClientId, _reason: DisconnectReason) {}
 }
+
+#[delegate_output]
+impl<E: Engine> smithay::wayland::buffer::BufferHandler for Charlie<E> {
+    fn buffer_destroyed(&mut self, _buffer: &wayland_server::protocol::wl_buffer::WlBuffer) {}
+}
+
+#[delegate_shm]
+impl<E: Engine> smithay::wayland::shm::ShmHandler for Charlie<E> {
+    fn shm_state(&self) -> &smithay::wayland::shm::ShmState {
+        &self.engine().shm_state()
+    }
+}
+
+#[delegate_dmabuf]
+impl<E: Engine> smithay::wayland::dmabuf::DmabufHandler for Charlie<E> {
+    fn dmabuf_state(&mut self) -> &mut smithay::wayland::dmabuf::DmabufState {
+        &mut self.engine_mut().dmabuf_state()
+    }
+    fn dmabuf_imported(&mut self, _global: &smithay::wayland::dmabuf::DmabufGlobal, dmabuf: smithay::backend::allocator::dmabuf::Dmabuf) -> Result<(), smithay::wayland::dmabuf::ImportError> {
+        self.engine().renderer()
+            .import_dmabuf(&dmabuf, None)
+            .map(|_| ())
+            .map_err(|_| smithay::wayland::dmabuf::ImportError::Failed)
+    }
+}
+
+use smithay::backend::renderer::ImportDma;

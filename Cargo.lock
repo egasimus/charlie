@@ -2061,6 +2061,7 @@ dependencies = [
  "quote",
  "smithay",
  "syn",
+ "wayland-protocols 0.30.0",
  "wayland-server",
 ]
 

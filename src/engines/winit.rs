@@ -64,7 +64,7 @@ pub struct WinitEngine {
 impl Engine for WinitEngine {
 
     /// Initialize winit engine
-    fn new (logger: &Logger, display: &DisplayHandle) -> Result<Self, Box<dyn Error>> {
+    fn new <T: App<Self>> (logger: &Logger, display: &DisplayHandle) -> Result<Self, Box<dyn Error>> {
 
         debug!(logger, "Starting Winit engine");
 
@@ -89,7 +89,7 @@ impl Engine for WinitEngine {
         // Init dmabuf support
         renderer.bind_wl_display(&display)?;
         let mut dmabuf_state = DmabufState::new();
-        let dmabuf_global = dmabuf_state.create_global::<Box<dyn App<Self>>, _>(
+        let dmabuf_global = dmabuf_state.create_global::<T, _>(
             display,
             renderer.dmabuf_formats().cloned().collect::<Vec<_>>(),
             logger.clone(),
@@ -97,8 +97,8 @@ impl Engine for WinitEngine {
 
         Ok(Self {
             logger:        logger.clone(),
-            shm:           ShmState::new::<Box<dyn App<Self>>, _>(&display, vec![], logger.clone()),
-            out_manager:   OutputManagerState::new_with_xdg_output::<Box<dyn App<Self>>>(&display),
+            shm:           ShmState::new::<T, _>(&display, vec![], logger.clone()),
+            out_manager:   OutputManagerState::new_with_xdg_output::<T>(&display),
             running:       Arc::new(AtomicBool::new(true)),
             started:       Cell::new(None),
             winit_events:  Rc::new(RefCell::new(winit_events)),
@@ -168,6 +168,14 @@ impl Engine for WinitEngine {
             Ok(())
         }
 
+    }
+
+    fn dmabuf_state (&mut self) -> &mut smithay::wayland::dmabuf::DmabufState {
+        &mut self.dmabuf_state
+    }
+
+    fn shm_state (&self) -> &smithay::wayland::shm::ShmState {
+        &self.shm
     }
 
 }
@@ -351,31 +359,6 @@ impl Outputs for WinitEngine {
         let window_id = window.id();
         self.outputs.borrow_mut().insert(window_id, window);
         Ok(())
-    }
-}
-
-#[delegate_output]
-impl BufferHandler for Box<dyn App<WinitEngine>> {
-    fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
-}
-
-#[delegate_shm]
-impl ShmHandler for Box<dyn App<WinitEngine>> {
-    fn shm_state(&self) -> &ShmState {
-        &self.engine().shm
-    }
-}
-
-#[delegate_dmabuf]
-impl DmabufHandler for Box<dyn App<WinitEngine>> {
-    fn dmabuf_state(&mut self) -> &mut DmabufState {
-        &mut self.engine_mut().dmabuf_state
-    }
-    fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf) -> Result<(), ImportError> {
-        self.engine().renderer()
-            .import_dmabuf(&dmabuf, None)
-            .map(|_| ())
-            .map_err(|_| ImportError::Failed)
     }
 }
 
