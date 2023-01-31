@@ -19,6 +19,8 @@ delegator!(delegate_compositor);
 
 delegator!(delegate_xdg_shell);
 
+delegator!(delegate_shm);
+
 delegator!(delegate_dmabuf);
 
 delegator!(delegate_fractional_scale);
