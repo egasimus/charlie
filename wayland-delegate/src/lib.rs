@@ -6,8 +6,8 @@ use crate::impls::{delegate, delegate_global};
 
 macro_rules! delegator {
     ($name:ident) => {
-        #[proc_macro]
-        pub fn $name (input: TokenStream) -> TokenStream {
+        #[proc_macro_attribute]
+        pub fn $name (input: TokenStream, _: TokenStream) -> TokenStream {
             crate::impls::$name(input.into()).into()
         }
     }

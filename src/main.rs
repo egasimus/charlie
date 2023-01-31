@@ -1,5 +1,7 @@
 #![feature(int_roundings, anonymous_lifetime_in_impl_trait, associated_type_defaults)]
 
+#[macro_use] extern crate wayland_delegate;
+
 mod prelude;
 mod traits;
 mod engines;

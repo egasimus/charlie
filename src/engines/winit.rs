@@ -44,12 +44,6 @@ use smithay::{
 
 use wayland_egl as wegl;
 
-smithay::delegate_output!(dyn App<WinitEngine>);
-
-smithay::delegate_shm!(dyn App<WinitEngine>);
-
-smithay::delegate_dmabuf!(dyn App<WinitEngine>);
-
 /// Contains the winit and wayland event loops, spawns one or more windows,
 /// and dispatches events to them.
 pub struct WinitEngine {
@@ -360,19 +354,18 @@ impl Outputs for WinitEngine {
     }
 }
 
-impl<T: App<WinitEngine>> BufferHandler for T {
+impl BufferHandler for dyn App<WinitEngine> {
     fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
 }
 
-#[delegate_shm]
-impl<T: App<WinitEngine>> ShmHandler for T {
+impl ShmHandler for dyn App<WinitEngine> {
     fn shm_state(&self) -> &ShmState {
-        &self.engine.shm
+        &self.engine().shm
     }
 }
 
 #[delegate_dmabuf]
-impl<T: App<WinitEngine>> DmabufHandler for T {
+impl DmabufHandler for dyn App<WinitEngine> {
     fn dmabuf_state(&mut self) -> &mut DmabufState {
         &mut self.engine.dmabuf_state
     }
